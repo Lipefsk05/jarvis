@@ -1,0 +1,147 @@
+"""Telegram front-end: a thin wrapper over Assistant. Only allowlisted users get answers."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+from .assistant import Assistant
+from .budget import Budget
+from .config import Settings
+from .conversation import History
+from .humor import HumorGate
+from .inbox import write_note
+from .persona import load_template
+from .talker.factory import build_talker
+
+log = logging.getLogger("jarvis")
+
+GREETING = (
+    "À disposição, senhor. Por ora eu converso e anoto: use /anota <texto> para "
+    "guardar algo, /uso para ver o gasto do dia e /esquece para limpar a conversa."
+)
+NOT_FUNNY = "not_funny"
+
+
+def feedback_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("😐 essa não deu", callback_data=NOT_FUNNY)]]
+    )
+
+
+def build_application(settings: Settings) -> Application:
+    tz = ZoneInfo(settings.timezone)
+
+    def clock() -> datetime:
+        return datetime.now(tz)
+
+    budget = Budget(
+        settings.state_dir / "usage.json",
+        settings.daily_budget_usd,
+        settings.price_in,
+        settings.price_out,
+        clock=clock,
+    )
+    gate = HumorGate()
+    history = History(settings.history_messages)
+    assistant = Assistant(
+        talker=build_talker(settings),
+        budget=budget,
+        gate=gate,
+        history=history,
+        template=load_template(settings.persona_path),
+        clock=clock,
+        estado_path=settings.state_dir / "estado_atual.md",
+    )
+    allowed = filters.User(user_id=list(settings.allowed_ids))
+
+    async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(GREETING)
+
+    async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        chat_id = update.effective_chat.id
+        await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
+        markup = feedback_markup() if reply.humor_offered else None
+        await message.reply_text(reply.text, reply_markup=markup)
+        if reply.warn_budget:
+            await message.reply_text("Aviso, senhor: já usei 80% do teto de gasto de hoje.")
+
+    async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        text = message.text.partition(" ")[2].strip()
+        if not text:
+            await message.reply_text("O que devo anotar, senhor? Use /anota <texto>.")
+            return
+        path = await asyncio.to_thread(write_note, settings.inbox_dir, text, clock(), "telegram")
+        await message.reply_text(f"Anotado, senhor ({path.name}).")
+
+    async def on_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(budget.summary())
+
+    async def on_forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        history.clear(update.effective_chat.id)
+        await update.effective_message.reply_text("Conversa limpa, senhor.")
+
+    async def on_not_funny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query.from_user.id not in settings.allowed_ids:
+            await query.answer()
+            return
+        gate.feedback_not_funny(query.message.chat_id)
+        settings.state_dir.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": clock().isoformat(timespec="seconds"), "reply": query.message.text}
+        with (settings.state_dir / "humor_feedback.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        await query.answer("Anotado, senhor.")
+        await query.edit_message_reply_markup(reply_markup=None)
+
+    async def on_stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        log.warning("Ignored message from non-allowlisted user id=%s", user.id if user else "?")
+
+    app = Application.builder().token(settings.telegram_token).build()
+    app.add_handler(CommandHandler("start", on_start, filters=allowed))
+    app.add_handler(CommandHandler("anota", on_note, filters=allowed))
+    app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
+    app.add_handler(CommandHandler("esquece", on_forget, filters=allowed))
+    app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_handler(CallbackQueryHandler(on_not_funny, pattern=f"^{NOT_FUNNY}$"))
+    app.add_handler(MessageHandler(~allowed, on_stranger), group=1)
+    return app
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # httpx logs full request URLs at INFO, and Telegram URLs contain the bot token.
+    for noisy in ("httpx", "httpcore", "telegram"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    settings = Settings.load()
+    problems = settings.problems()
+    if problems:
+        print("Cannot start. Fix your .env first:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        sys.exit(1)
+
+    log.info(
+        "Starting Jarvis: provider=%s model=%s allowed_users=%d",
+        settings.provider, settings.model, len(settings.allowed_ids),
+    )
+    build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES)
