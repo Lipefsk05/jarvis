@@ -1,6 +1,6 @@
 # Jarvis — desenho técnico
 
-Documento vivo do desenho. Estado: **fase de desenho, sem código**. Atualizar quando uma decisão mudar.
+Documento vivo do desenho. Estado: **Fase 1 implementada e rodando** (ver "Estado da implementação"); voz e demais fases ainda só em desenho. Atualizar quando uma decisão mudar.
 
 ## Objetivo
 
@@ -24,7 +24,7 @@ Assistente pessoal com conversa por voz fluida (interrupção, humor seco com ti
  +--------------------------------------------------------------------------+
 ```
 
-- **Falador**: modelo rápido por API atrás de uma interface de provedor trocável (`anthropic` por padrão; `gemini` só em teste, porque o plano grátis pode usar o conteúdo enviado). Recebe persona + estado atual + últimos turnos + flag `humor_permitido`.
+- **Falador**: modelo rápido por API atrás de uma interface de provedor trocável, com uma **cadeia** (`JARVIS_TALKER_PROVIDER` e `JARVIS_TALKER_FALLBACK_PROVIDERS`). Hoje o principal é o Groq (`gpt-oss-120b`, raciocínio mínimo); `gemini` é reserva possível (o plano grátis pode usar o conteúdo enviado); `anthropic` (Haiku) entra se o dono quiser pagar. Cada provedor tem os próprios modelos e preços. Recebe persona + estado atual + últimos turnos + flag `humor_permitido`.
 - **Trabalhador**: Claude Code headless (`claude -p`, `--resume` só dentro da mesma tarefa). Roda em segundo plano; o Falador avisa quando termina.
 - **Cliente de voz**: Python no Windows (áudio nativo). Só captura/toca áudio e desenha a orb; a lógica fica no núcleo.
 - **Núcleo**: Python no WSL, ao lado do Claude Code e do vault. Canal é um **adaptador** (Telegram hoje; app próprio depois).
@@ -70,6 +70,24 @@ Batimento por minuto e registro da lacuna; mensagens do Telegram ficam guardadas
 3. **Presença e handoff** com voz em casa.
 4. **Proatividade** com escalonamento de avisos.
 5. **App próprio** (Flutter ou PWA), widget, voz em tempo real fora de casa; depois ligação e outros canais.
+
+## Estado da implementação (2026-10-08)
+
+Fase 1 (núcleo + Telegram) funcionando, 96 testes. Módulos em `src/jarvis/`:
+
+| Módulo | O quê |
+|---|---|
+| `config.py` | Configuração por `.env` e ambiente, validação na partida (diz o nome do que falta, nunca o valor) |
+| `bot.py` | Telegram: allowlist de IDs, comandos, botão "essa não deu", aviso quando um provedor reserva responde; nunca loga conteúdo nem token |
+| `assistant.py` | Um turno: teto de gasto, trava de humor, persona, modelo, histórico; desembrulha a piada de `[[humor: ...]]` |
+| `humor.py` | Trava de humor: erro, urgência, dinheiro, pedido de explicação, CAPS e pressa; intervalo que só reinicia com piada real |
+| `style.py` | Dicas de estilo sorteadas (cumprimentos e agradecimentos) pra forçar variedade e evitar construções arcaicas |
+| `persona.py` + `persona/jarvis.md` | Prompt do Falador e seus marcadores de contexto |
+| `budget.py` | Contador e teto diário em JSON; custo por provedor |
+| `mind.py`, `commands.py`, `inbox.py` | Vault: tarefas pendentes (somente leitura) e notas no inbox (único lugar onde escreve) |
+| `talker/` | Provedores (`anthropic`, `gemini`, `groq`) e `chain.py`, que tenta um depois do outro |
+
+Pendente: ver a lista no board de tarefas do dono (robustez, lembretes, áudio, política de contexto, agenda e e-mail, Trabalhador, voz).
 
 ## Em aberto
 
