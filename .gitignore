@@ -22,3 +22,7 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Editor swap files (nano/vim leave these next to .env while editing)
+*.swp
+*.swo
