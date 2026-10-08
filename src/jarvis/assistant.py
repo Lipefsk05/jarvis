@@ -14,6 +14,7 @@ from .conversation import History
 from .humor import HumorGate
 from .mind import tasks_context
 from .persona import render
+from .style import StyleHints
 from .talker.base import Talker, TalkerError
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class Assistant:
         clock: Callable[[], datetime],
         estado_path: Path | None = None,
         mind_dir: Path | None = None,
+        hints: StyleHints | None = None,
     ) -> None:
         self._talker = talker
         self._budget = budget
@@ -80,6 +82,7 @@ class Assistant:
         self._clock = clock
         self._estado_path = estado_path
         self._mind_dir = mind_dir
+        self._hints = hints or StyleHints()
 
     def _estado_atual(self) -> str:
         if self._estado_path is None:
@@ -108,6 +111,7 @@ class Assistant:
             now=self._clock(),
             estado_atual=self._estado_atual(),
             tarefas=self._tasks(text),
+            dica=self._hints.hint_for(chat_id, text),
         )
         self._history.add(chat_id, "user", text)
         try:

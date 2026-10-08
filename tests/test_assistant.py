@@ -122,6 +122,16 @@ class AssistantTest(unittest.TestCase):
             a.respond(1, "quais são minhas tarefas de carreira?")
             self.assertIn("Candidatura CLT", talker.calls[1][0])
 
+    def test_greeting_gets_a_style_hint_and_other_messages_do_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker()
+            a, _ = self.make(tmp, talker)
+            a._template = "SYS dica={{dica_de_estilo}}"
+            a.respond(1, "bom dia")
+            a.respond(1, "me explica o que é DNS")
+            self.assertIn("Cumprimente", talker.calls[0][0])
+            self.assertIn("dica=(nenhuma)", talker.calls[1][0])
+
     def test_blocked_when_over_budget_without_calling_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             talker = FakeTalker()
