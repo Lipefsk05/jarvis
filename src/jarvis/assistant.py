@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,9 @@ BLOCKED_MESSAGE = (
 FAILED_MESSAGE = "Não consegui falar com o modelo agora, senhor. Tente de novo em instantes."
 # The model appends this mark only when it actually made a joke; it is stripped before sending.
 JOKE_MARK = "[[humor]]"
+# Models sometimes garble the mark ("[humor]", "[[Humor]]") or leave a stray "]]".
+_JOKE_MARK_RE = re.compile(r"\[{1,2}\s*humor\s*\]{1,2}", re.IGNORECASE)
+_STRAY_CLOSER_RE = re.compile(r"\s*\]\]\s*$")
 
 
 @dataclass(frozen=True)
@@ -80,8 +84,8 @@ class Assistant:
             return AssistantReply(FAILED_MESSAGE)
 
         self._budget.add(reply.input_tokens, reply.output_tokens)
-        joked = JOKE_MARK in reply.text
-        clean = reply.text.replace(JOKE_MARK, "").strip()
+        joked = bool(_JOKE_MARK_RE.search(reply.text))
+        clean = _STRAY_CLOSER_RE.sub("", _JOKE_MARK_RE.sub("", reply.text)).strip()
         if not clean:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)

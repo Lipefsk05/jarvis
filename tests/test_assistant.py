@@ -57,6 +57,19 @@ class AssistantTest(unittest.TestCase):
             history = talker.calls[1][1]
             self.assertEqual(history[1], {"role": "assistant", "content": "Pontualidade rara, senhor."})
 
+    def test_garbled_marks_and_stray_closer_are_cleaned(self):
+        cases = [
+            ("Boa, senhor. [humor]", "Boa, senhor.", True),
+            ("Boa, senhor. [[Humor]]", "Boa, senhor.", True),
+            ("Qual foi o erro, senhor?]]", "Qual foi o erro, senhor?", False),
+            ("Veja a nota [1] acima.", "Veja a nota [1] acima.", False),
+        ]
+        for raw, expected, joked in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                a, _ = self.make(tmp, FakeTalker([Reply(raw, 10, 5)]))
+                r = a.respond(1, "oi")
+                self.assertEqual((r.text, r.humor_offered), (expected, joked), raw)
+
     def test_cooldown_starts_only_after_a_real_joke(self):
         with tempfile.TemporaryDirectory() as tmp:
             talker = FakeTalker([Reply("sem graça", 10, 5), Reply("piada [[humor]]", 10, 5), Reply("x", 10, 5)])
