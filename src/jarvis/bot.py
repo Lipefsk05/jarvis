@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
@@ -22,7 +22,8 @@ from telegram.ext import (
 
 from .assistant import Assistant
 from .budget import Budget
-from .commands import parse_note_request, task_query_words
+from .commands import asks_capabilities, parse_note_request, task_query_words, wants_tasks
+from .help import format_help, menu
 from .config import Settings
 from .conversation import History
 from .humor import HumorGate
@@ -34,12 +35,8 @@ from .talker.factory import build_talker
 
 log = logging.getLogger("jarvis")
 
-GREETING = (
-    "À disposição, senhor. Por ora eu converso, anoto no seu Mind e consulto as tarefas pendentes: "
-    "/anota <texto> guarda uma nota, /tarefas [área] mostra as pendências, /uso mostra o gasto do dia "
-    "e /esquece limpa a conversa."
-)
-UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /anota, /tarefas, /uso ou /esquece."
+GREETING = "À disposição, senhor. Eu converso, anoto no seu Mind e consulto as tarefas pendentes. Use /ajuda para ver tudo o que sei fazer."
+UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /ajuda para ver o que sei fazer."
 TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
 
@@ -94,6 +91,12 @@ def build_application(settings: Settings) -> Application:
         if note is not None:  # handled by code: no model call, nothing to invent
             await save_note(message, note)
             return
+        if asks_capabilities(message.text):  # the list comes from code, so it is always complete and right
+            await send_help(message)
+            return
+        if wants_tasks(message.text):  # same readable answer as /tarefas, no model call
+            await reply_tasks(message, task_query_words(message.text))
+            return
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
         markup = feedback_markup() if reply.humor_offered else None
@@ -107,9 +110,7 @@ def build_application(settings: Settings) -> Application:
         message = update.effective_message
         await save_note(message, message.text.partition(" ")[2].strip())
 
-    async def on_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        message = update.effective_message
-        typed = task_query_words(" ".join(context.args or []), min_len=3)
+    async def reply_tasks(message, typed: list[str]) -> None:
         tasks = await asyncio.to_thread(load_pending, settings.mind_dir)
         words, fixes = resolve_query(tasks, typed)  # tolerate typos, but only in an explicit query
         chosen = select(tasks, words)
@@ -124,6 +125,17 @@ def build_application(settings: Settings) -> Application:
             )
         else:
             await message.reply_text(format_summary(tasks), **opts)
+
+    async def send_help(message) -> None:
+        await message.reply_text(
+            format_help(), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+
+    async def on_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await send_help(update.effective_message)
+
+    async def on_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await reply_tasks(update.effective_message, task_query_words(" ".join(context.args or []), min_len=3))
 
     async def on_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(UNKNOWN_COMMAND)
@@ -158,12 +170,19 @@ def build_application(settings: Settings) -> Application:
         user = update.effective_user
         log.warning("Ignored message from non-allowlisted user id=%s", user.id if user else "?")
 
-    app = Application.builder().token(settings.telegram_token).build()
+    async def publish_menu(application: Application) -> None:
+        try:
+            await application.bot.set_my_commands([BotCommand(name, text) for name, text in menu()])
+        except Exception as exc:  # the menu is a convenience; the bot works without it
+            log.warning("Could not publish the command menu: %s", type(exc).__name__)
+
+    app = Application.builder().token(settings.telegram_token).post_init(publish_menu).build()
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
+    app.add_handler(CommandHandler(["ajuda", "help"], on_help, filters=allowed))
     app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.COMMAND, on_unknown))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))

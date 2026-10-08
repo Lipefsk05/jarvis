@@ -8,10 +8,29 @@ class ParseNoteRequestTest(unittest.TestCase):
         self.assertEqual(parse_note_request("anota comprar café"), "comprar café")
         self.assertEqual(parse_note_request("Anota: ligar pro Matheus"), "ligar pro Matheus")
         self.assertEqual(parse_note_request("  anote - revisar o contrato"), "revisar o contrato")
-        self.assertEqual(parse_note_request("anotar isso\nem duas linhas"), "isso\nem duas linhas")
+        self.assertEqual(parse_note_request("anotar isso\nem duas linhas"), "em duas linhas")  # "isso" points at what follows
+        self.assertEqual(parse_note_request("anota comprar pão\ne leite"), "comprar pão\ne leite")  # multi-line notes keep every line
         self.assertEqual(parse_note_request("anota que preciso comprar queijo"), "preciso comprar queijo")
         self.assertEqual(parse_note_request("anota aí: ligar pro banco"), "ligar pro banco")
         self.assertEqual(parse_note_request("anota quebrar o gelo"), "quebrar o gelo")  # "que" only as a whole word
+
+    def test_other_ways_of_asking_for_a_note(self):
+        cases = {
+            "pode anotar que preciso comprar pão": "preciso comprar pão",
+            "Preciso anotar: ligar pro banco": "ligar pro banco",
+            "vc pode anotar isso: reunião às 10": "reunião às 10",
+            "quero anotar uma ideia pro app": "uma ideia pro app",
+            "registra aí que o deploy é sexta": "o deploy é sexta",
+            "guarda isso: senha do wifi é a de casa": "senha do wifi é a de casa",
+            "salva isso pra mim: ver o contrato": "ver o contrato",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(parse_note_request(text), expected, text)
+
+    def test_ambiguous_verbs_without_isso_are_not_notes(self):
+        for text in ("guarda o notebook na mochila", "salva meu dia", "registra o domínio da empresa", "me lembra de ligar pro banco",
+                     "não esquece de ligar pro Matheus", "pode explicar o que é um webhook"):
+            self.assertIsNone(parse_note_request(text), text)
 
     def test_bare_word_asks_what_to_note(self):
         self.assertEqual(parse_note_request("anota"), "")

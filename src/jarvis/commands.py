@@ -5,7 +5,20 @@ import re
 
 from .textutil import fold
 
-_NOTE = re.compile(r"^\s*(?:anota|anote|anotar)\b[\s:,\-]*(.*)$", re.IGNORECASE | re.DOTALL)
+# Two families of note requests. "anotar" is unambiguous, so polite or needy prefixes are fine
+# ("pode anotar que...", "preciso anotar:"). "registrar/guardar/salvar" also mean other things
+# ("guarda o notebook"), so they only count when followed by "isso" / "aí" / "pra mim".
+_NOTE = re.compile(
+    r"^\s*(?:"
+    r"(?:(?:pode|poderia|consegue|voce pode|você pode|vc pode|quero|preciso|vou|gostaria de)\s+)*"
+    r"(?:(?:me|mim)\s+)?(?:anota|anote|anotar)\b(?:\s+(?:isso|ai|aí|pra mim|para mim))*"
+    r"|"
+    r"(?:(?:pode|poderia|consegue|voce pode|você pode|vc pode)\s+)*"
+    r"(?:registra|registre|registrar|guarda|guarde|guardar|salva|salve|salvar)\s+(?:isso|ai|aí|pra mim|para mim)"
+    r"(?:\s+(?:ai|aí|pra mim|para mim))?"
+    r")[\s:,\-]*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
 # "anota que preciso comprar queijo" -> the filler "que" is not part of the note.
 _FILLER = re.compile(r"^(?:que|aí|ai)\b[\s:,\-]*", re.IGNORECASE)
 
@@ -23,7 +36,7 @@ def parse_note_request(text: str) -> str | None:
 
 
 _TASKS_REQUEST = re.compile(
-    r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|pendentes?)\b"
+    r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|o que (?:ainda )?(?:falta|resta)|o que tem (?:pra|para|que) fazer|pendentes?)\b"
 )
 _STOPWORDS = {
     "quais", "tarefas", "tarefa", "tenho", "pendencias", "pendencia", "pendentes", "pendente", "minhas",
@@ -32,6 +45,27 @@ _STOPWORDS = {
     "voce", "agora", "aqui", "isso", "esse", "essa", "entao", "tipo", "coisa", "coisas", "semana",
     "amanha", "afazeres", "fazendo", "como", "estao", "estou", "ficou", "deve", "fala",
 }
+
+
+_CAPABILITIES = re.compile(
+    r"(?:^|\W)(?:"
+    r"o ?q(?:ue)? (?:voce|vc|tu) (?:pode|consegue|sabe|faz)(?: fazer)?|"
+    r"(?:como|em que) (?:voce|vc|tu) (?:pode|consegue) (?:me )?ajudar|"
+    r"(?:quais|qual) (?:sao )?(?:as |os )?(?:suas |seus )?(?:funcoes|funcionalidades|comandos|recursos|habilidades)|"
+    r"(?:pra|para) que (?:voce|vc|tu) serve|"
+    r"(?:me )?(?:lista|mostra|mostre) (?:os |seus |todos os )?comandos"
+    r")\b"
+)
+_BARE_HELP = re.compile(r"^\W*(?:ajuda|help|comandos|menu)\W*$")
+
+
+def asks_capabilities(text: str) -> bool:
+    """True for "o que você pode fazer?", "como pode me ajudar?", "quais são suas funções?", "ajuda"..."""
+    folded = fold(text)
+    if _BARE_HELP.match(folded):
+        return True
+    # Long messages are about something else ("o que você pode fazer com o meu deploy ...").
+    return len(folded.split()) <= 9 and bool(_CAPABILITIES.search(folded))
 
 
 def wants_tasks(text: str) -> bool:
