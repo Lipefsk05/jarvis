@@ -72,17 +72,22 @@ def summary(tasks: list[Task]) -> str:
     return "; ".join(f"{g}/{a}: {n}" for (g, a), n in sorted(counts.items()))
 
 
+def _haystack(task: Task) -> str:
+    return " ".join((fold(task.group), fold(task.area.replace("-", " ")), fold(task.section)))
+
+
 def select(tasks: list[Task], words: list[str]) -> list[Task]:
-    """Tasks whose group, area or section matches any of the (accent-folded) words."""
+    """Tasks whose group, area or section match the (accent-folded) words.
+
+    Every word must match, so extra words narrow the list ("dindin feedback"); if nothing
+    matches them all, fall back to tasks matching any word."""
     wanted = [fold(w) for w in words if w]
     if not wanted:
         return []
-    chosen = []
-    for task in tasks:
-        haystack = " ".join((fold(task.group), fold(task.area.replace("-", " ")), fold(task.section)))
-        if any(w in haystack for w in wanted):
-            chosen.append(task)
-    return chosen
+    strict = [t for t in tasks if all(w in _haystack(t) for w in wanted)]
+    if strict:
+        return strict
+    return [t for t in tasks if any(w in _haystack(t) for w in wanted)]
 
 
 def render_items(items: list[Task], limit: int = 25) -> str:

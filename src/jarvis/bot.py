@@ -8,8 +8,8 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatAction
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -27,7 +27,8 @@ from .config import Settings
 from .conversation import History
 from .humor import HumorGate
 from .inbox import write_note
-from .mind import load_pending, render_items, select, summary
+from .mind import load_pending, select
+from .telegram_format import format_items, format_summary, safe
 from .persona import load_template
 from .talker.factory import build_talker
 
@@ -111,16 +112,15 @@ def build_application(settings: Settings) -> Application:
         words = task_query_words(" ".join(context.args or []))
         tasks = await asyncio.to_thread(load_pending, settings.mind_dir)
         chosen = select(tasks, words)
+        opts = {"parse_mode": ParseMode.HTML, "link_preview_options": LinkPreviewOptions(is_disabled=True)}
         if chosen:
-            await message.reply_text(f"{len(chosen)} pendentes:\n{render_items(chosen, TASK_LIST_LIMIT)}")
+            await message.reply_text(format_items(chosen, TASK_LIST_LIMIT), **opts)
         elif words:
             await message.reply_text(
-                f"Não encontrei pendências para \"{' '.join(words)}\", senhor. Áreas: {summary(tasks)}."
+                f"Não encontrei pendências para \"{safe(' '.join(words))}\", senhor.\n\n{format_summary(tasks)}", **opts
             )
         else:
-            await message.reply_text(
-                f"Pendências por área, senhor: {summary(tasks)}. Use /tarefas <área> para ver os itens."
-            )
+            await message.reply_text(format_summary(tasks), **opts)
 
     async def on_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(UNKNOWN_COMMAND)
