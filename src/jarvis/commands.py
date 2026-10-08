@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from .textutil import fold
+
 _NOTE = re.compile(r"^\s*(?:anota|anote|anotar)\b[\s:,\-]*(.*)$", re.IGNORECASE | re.DOTALL)
 # "anota que preciso comprar queijo" -> the filler "que" is not part of the note.
 _FILLER = re.compile(r"^(?:que|aí|ai)\b[\s:,\-]*", re.IGNORECASE)
@@ -18,3 +20,25 @@ def parse_note_request(text: str) -> str | None:
     if not match:
         return None
     return _FILLER.sub("", match.group(1).strip()).strip()
+
+
+_TASKS_REQUEST = re.compile(
+    r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta) (?:pra|para) fazer)\b"
+)
+_STOPWORDS = {
+    "quais", "tarefas", "tarefa", "tenho", "pendencias", "pendencia", "pendentes", "pendente", "minhas",
+    "minha", "meus", "preciso", "fazer", "para", "sobre", "qual", "tem", "hoje", "lista", "mostra",
+    "mostre", "algo", "alguma", "algum", "ainda", "falta", "faltam", "todas", "todos", "favor", "pode",
+    "voce", "agora", "aqui", "isso", "esse", "essa", "entao", "tipo", "coisa", "coisas", "semana",
+    "amanha", "afazeres", "fazendo", "como", "estao", "estou", "ficou", "deve", "fala",
+}
+
+
+def wants_tasks(text: str) -> bool:
+    """True when the message asks about tasks/pending items."""
+    return bool(_TASKS_REQUEST.search(fold(text)))
+
+
+def task_query_words(text: str) -> list[str]:
+    """Words that may name an area or section ("tarefas de carreira" -> ["carreira"])."""
+    return [w for w in re.findall(r"[a-z0-9]{4,}", fold(text)) if w not in _STOPWORDS]

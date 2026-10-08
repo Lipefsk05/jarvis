@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Callable
 
 from .budget import Budget
+from .commands import task_query_words, wants_tasks
 from .conversation import History
 from .humor import HumorGate
+from .mind import tasks_context
 from .persona import render
 from .talker.base import Talker, TalkerError
 
@@ -68,6 +70,7 @@ class Assistant:
         template: str,
         clock: Callable[[], datetime],
         estado_path: Path | None = None,
+        mind_dir: Path | None = None,
     ) -> None:
         self._talker = talker
         self._budget = budget
@@ -76,6 +79,7 @@ class Assistant:
         self._template = template
         self._clock = clock
         self._estado_path = estado_path
+        self._mind_dir = mind_dir
 
     def _estado_atual(self) -> str:
         if self._estado_path is None:
@@ -84,6 +88,14 @@ class Assistant:
             return self._estado_path.read_text(encoding="utf-8")
         except OSError:
             return ""
+
+    def _tasks(self, text: str) -> str:
+        if self._mind_dir is None or not wants_tasks(text):
+            return ""
+        try:
+            return tasks_context(self._mind_dir, task_query_words(text))
+        except OSError:
+            return "(não consegui ler as tarefas do Mind agora)"
 
     def respond(self, chat_id: int, text: str) -> AssistantReply:
         if not self._budget.can_spend():
@@ -95,6 +107,7 @@ class Assistant:
             humor_allowed=permitted,
             now=self._clock(),
             estado_atual=self._estado_atual(),
+            tarefas=self._tasks(text),
         )
         self._history.add(chat_id, "user", text)
         try:

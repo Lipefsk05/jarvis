@@ -94,6 +94,7 @@ class Settings:
     price_out: float
     inbox_dir: Path
     state_dir: Path
+    mind_dir: Path
     persona_path: Path
     history_messages: int
     timezone: str
@@ -107,6 +108,7 @@ class Settings:
         env_path = env_path if env_path is not None else REPO_ROOT / ".env"
         values = {**parse_env_file(env_path), **(os.environ if environ is None else environ)}
 
+        mind_dir = Path(values.get("JARVIS_MIND_DIR") or "~/projetos/mind").expanduser()
         provider = (values.get("JARVIS_TALKER_PROVIDER") or "anthropic").strip().lower()
         default_in, default_out = DEFAULT_PRICES.get(provider, (0.0, 0.0))
         price_in = _opt_float(values.get("JARVIS_PRICE_IN_PER_MTOK"))
@@ -125,9 +127,8 @@ class Settings:
             daily_budget_usd=_opt_float(values.get("JARVIS_DAILY_BUDGET_USD")),
             price_in=default_in if price_in is None else price_in,
             price_out=default_out if price_out is None else price_out,
-            inbox_dir=Path(
-                values.get("JARVIS_INBOX_DIR") or "~/projetos/mind/inbox/jarvis"
-            ).expanduser(),
+            mind_dir=mind_dir,
+            inbox_dir=Path(values.get("JARVIS_INBOX_DIR") or mind_dir / "inbox" / "jarvis").expanduser(),
             state_dir=Path(values.get("JARVIS_STATE_DIR") or REPO_ROOT / "state").expanduser(),
             persona_path=Path(values.get("JARVIS_PERSONA_PATH") or REPO_ROOT / "persona" / "jarvis.md"),
             history_messages=int(values.get("JARVIS_HISTORY_MESSAGES") or 32),

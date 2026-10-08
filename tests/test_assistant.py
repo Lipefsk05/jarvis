@@ -108,6 +108,20 @@ class AssistantTest(unittest.TestCase):
             self.assertEqual(a.respond(1, "oi").text, FAILED_MESSAGE)
             self.assertEqual(a._history.messages(1), [])
 
+    def test_task_context_is_injected_only_when_asked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "vault"
+            (root / "tarefas" / "pessoal").mkdir(parents=True)
+            (root / "tarefas" / "pessoal" / "carreira.md").write_text("## Vaga\n- [ ] **Candidatura CLT**\n", encoding="utf-8")
+            talker = FakeTalker()
+            a, _ = self.make(tmp, talker)
+            a._mind_dir = root
+            a._template = "SYS tarefas={{tarefas_mind}}"
+            a.respond(1, "oi")
+            self.assertIn("não perguntou", talker.calls[0][0])
+            a.respond(1, "quais são minhas tarefas de carreira?")
+            self.assertIn("Candidatura CLT", talker.calls[1][0])
+
     def test_blocked_when_over_budget_without_calling_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             talker = FakeTalker()

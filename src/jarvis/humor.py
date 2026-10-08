@@ -8,13 +8,9 @@ minimum gap between jokes.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 
-def _fold(text: str) -> str:
-    """Lowercase and strip accents for keyword matching."""
-    decomposed = unicodedata.normalize("NFD", text.lower())
-    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+from .textutil import fold as _fold
 
 
 SERIOUS_KEYWORDS = (

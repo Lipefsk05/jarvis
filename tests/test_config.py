@@ -44,6 +44,13 @@ class SettingsTest(unittest.TestCase):
         ok = self.load({"JARVIS_TALKER_PROVIDER": "groq", "GROQ_API_KEY": "k"})
         self.assertFalse(any("GROQ" in p for p in ok.problems()))
 
+    def test_mind_dir_and_inbox_default(self):
+        s = self.load({"JARVIS_MIND_DIR": "/tmp/somevault"})
+        self.assertEqual(str(s.mind_dir), "/tmp/somevault")
+        self.assertEqual(str(s.inbox_dir), "/tmp/somevault/inbox/jarvis")
+        s = self.load({"JARVIS_MIND_DIR": "/tmp/somevault", "JARVIS_INBOX_DIR": "/tmp/elsewhere"})
+        self.assertEqual(str(s.inbox_dir), "/tmp/elsewhere")
+
     def test_fallback_providers_parsing_and_validation(self):
         self.assertEqual(self.load({}).fallback_providers, ())
         s = self.load({"JARVIS_TALKER_PROVIDER": "groq", "JARVIS_TALKER_FALLBACK_PROVIDERS": " Gemini , groq, gemini,anthropic "})

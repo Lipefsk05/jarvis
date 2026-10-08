@@ -10,6 +10,7 @@ WEEKDAYS = (
 )
 NO_STATE = "(nenhum estado registrado ainda)"
 NO_SUMMARY = "(conversa recém-iniciada)"
+NO_TASKS = "(o senhor não perguntou por tarefas nesta mensagem)"
 
 
 def load_template(path: Path) -> str:
@@ -32,12 +33,14 @@ def render(
     now: datetime,
     estado_atual: str = "",
     resumo: str = "",
+    tarefas: str = "",
 ) -> str:
     replacements = {
         "{{humor_permitido}}": "SIM, mas a maioria das respostas NÃO deve ter piada: só faça uma se for realmente boa e ligada a um fato real" if humor_allowed else "NÃO",
         "{{data_hora}}": format_now(now),
         "{{estado_atual}}": estado_atual.strip() or NO_STATE,
         "{{resumo_conversa}}": resumo.strip() or NO_SUMMARY,
+        "{{tarefas_mind}}": tarefas.strip() or NO_TASKS,
     }
     for placeholder, value in replacements.items():
         template = template.replace(placeholder, value)

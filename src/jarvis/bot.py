@@ -22,20 +22,24 @@ from telegram.ext import (
 
 from .assistant import Assistant
 from .budget import Budget
-from .commands import parse_note_request
+from .commands import parse_note_request, task_query_words
 from .config import Settings
 from .conversation import History
 from .humor import HumorGate
 from .inbox import write_note
+from .mind import load_pending, render_items, select, summary
 from .persona import load_template
 from .talker.factory import build_talker
 
 log = logging.getLogger("jarvis")
 
 GREETING = (
-    "À disposição, senhor. Por ora eu converso e anoto: use /anota <texto> para "
-    "guardar algo, /uso para ver o gasto do dia e /esquece para limpar a conversa."
+    "À disposição, senhor. Por ora eu converso, anoto no seu Mind e consulto as tarefas pendentes: "
+    "/anota <texto> guarda uma nota, /tarefas [área] mostra as pendências, /uso mostra o gasto do dia "
+    "e /esquece limpa a conversa."
 )
+UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /anota, /tarefas, /uso ou /esquece."
+TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
 
 
@@ -68,6 +72,7 @@ def build_application(settings: Settings) -> Application:
         template=load_template(settings.persona_path),
         clock=clock,
         estado_path=settings.state_dir / "estado_atual.md",
+        mind_dir=settings.mind_dir,
     )
     allowed = filters.User(user_id=list(settings.allowed_ids))
 
@@ -100,6 +105,25 @@ def build_application(settings: Settings) -> Application:
     async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         await save_note(message, message.text.partition(" ")[2].strip())
+
+    async def on_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        words = task_query_words(" ".join(context.args or []))
+        tasks = await asyncio.to_thread(load_pending, settings.mind_dir)
+        chosen = select(tasks, words)
+        if chosen:
+            await message.reply_text(f"{len(chosen)} pendentes:\n{render_items(chosen, TASK_LIST_LIMIT)}")
+        elif words:
+            await message.reply_text(
+                f"Não encontrei pendências para \"{' '.join(words)}\", senhor. Áreas: {summary(tasks)}."
+            )
+        else:
+            await message.reply_text(
+                f"Pendências por área, senhor: {summary(tasks)}. Use /tarefas <área> para ver os itens."
+            )
+
+    async def on_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(UNKNOWN_COMMAND)
 
     async def on_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(budget.summary())
@@ -136,7 +160,9 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
-    app.add_handler(CommandHandler("esquece", on_forget, filters=allowed))
+    app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
+    app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))
+    app.add_handler(MessageHandler(allowed & filters.COMMAND, on_unknown))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_not_funny, pattern=f"^{NOT_FUNNY}$"))
     app.add_handler(MessageHandler(~allowed, on_stranger), group=1)
