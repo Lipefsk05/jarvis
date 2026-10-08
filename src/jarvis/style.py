@@ -31,12 +31,21 @@ THANKS_HINTS = (
     "Responda ao agradecimento com uma única palavra ou expressão curta e polida.",
     "Responda ao agradecimento dizendo que foi um prazer, de forma contida.",
 )
-# The phrase the model falls back to; banned whenever a hint is active.
-BANNED = (
-    'Evite a fórmula "em que posso ser útil" e variações como "posso ajudar". Use uma frase natural, curta '
-    "e direta, no tom do J.A.R.V.I.S. dos filmes: nada de construções rebuscadas ou arcaicas "
-    '(como "servir-lhe", "ocupar-me", "dispor-se").'
+# Offering help is welcome now and then; these hints allow it, the others steer away from it.
+HELP_HINTS = (
+    "Cumprimente e ofereça ajuda de forma natural e breve, perguntando em que pode ajudar o senhor hoje.",
+    "Cumprimente e pergunte se o senhor precisa de alguma coisa, de forma natural e breve.",
 )
+GREETING_POOL = GREETING_HINTS + HELP_HINTS
+STIFF_RULE = (
+    "Use uma frase natural, curta e direta, no tom do J.A.R.V.I.S. dos filmes: nada de construções "
+    'rebuscadas ou arcaicas (como "servir-lhe", "ocupar-me", "dispor-se").'
+)
+AVOID_RULE = 'Evite a fórmula "em que posso ser útil" e variações como "posso ajudar".'
+
+
+def _compose(hint: str) -> str:
+    return f"{hint} {STIFF_RULE}" + ("" if hint in HELP_HINTS else f" {AVOID_RULE}")
 
 
 def _words(text: str) -> list[str]:
@@ -68,7 +77,7 @@ class StyleHints:
     def hint_for(self, chat_id: int, text: str) -> str:
         """A style hint for greetings and thanks, or '' for everything else."""
         if is_greeting(text):
-            return f"{self._pick(chat_id, 'greeting', GREETING_HINTS)} {BANNED}"
+            return _compose(self._pick(chat_id, "greeting", GREETING_POOL))
         if is_thanks(text):
-            return f"{self._pick(chat_id, 'thanks', THANKS_HINTS)} {BANNED}"
+            return _compose(self._pick(chat_id, "thanks", THANKS_HINTS))
         return ""
