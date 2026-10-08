@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from .assistant import Assistant
 from .budget import Budget
+from .commands import parse_note_request
 from .config import Settings
 from .conversation import History
 from .humor import HumorGate
@@ -73,9 +74,20 @@ def build_application(settings: Settings) -> Application:
     async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(GREETING)
 
+    async def save_note(message, text: str) -> None:
+        if not text:
+            await message.reply_text("O que devo anotar, senhor? Use /anota <texto>.")
+            return
+        path = await asyncio.to_thread(write_note, settings.inbox_dir, text, clock(), "telegram")
+        await message.reply_text(f"Anotado, senhor ({path.name}).")
+
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         chat_id = update.effective_chat.id
+        note = parse_note_request(message.text)
+        if note is not None:  # handled by code: no model call, nothing to invent
+            await save_note(message, note)
+            return
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
         markup = feedback_markup() if reply.humor_offered else None
@@ -85,12 +97,7 @@ def build_application(settings: Settings) -> Application:
 
     async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
-        text = message.text.partition(" ")[2].strip()
-        if not text:
-            await message.reply_text("O que devo anotar, senhor? Use /anota <texto>.")
-            return
-        path = await asyncio.to_thread(write_note, settings.inbox_dir, text, clock(), "telegram")
-        await message.reply_text(f"Anotado, senhor ({path.name}).")
+        await save_note(message, message.text.partition(" ")[2].strip())
 
     async def on_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(budget.summary())
