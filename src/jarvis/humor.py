@@ -7,6 +7,7 @@ minimum gap between jokes.
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 
 
@@ -24,6 +25,16 @@ SERIOUS_KEYWORDS = (
     "morreu", "demitid",
 )
 HURRY_KEYWORDS = ("pressa", "rapido", "rapidinho", "depressa", "correndo")
+# Requests for information get a straight answer: no jokes about webhooks or git.
+_INFO_REQUEST = re.compile(
+    r"(?:^|\W)(?:me explica|me explique|explica|explique|o que e|oq e|o que significa|qual a diferenca|"
+    r"qual e a diferenca|como funciona|como eu faco|como faco|me ensina|pra que serve|para que serve)\b"
+)
+
+
+def is_informational(text: str) -> bool:
+    """True when the message asks for an explanation rather than chatting."""
+    return bool(_INFO_REQUEST.search(_fold(text)))
 
 
 def is_serious(text: str) -> bool:
@@ -57,7 +68,7 @@ class HumorGate:
         need = self._need.get(chat_id, self.min_gap)
         since = self._since.get(chat_id, need)  # first turn may joke
         self._since[chat_id] = since + 1
-        return since >= need and not is_serious(text)
+        return since >= need and not is_serious(text) and not is_informational(text)
 
     def record_joke(self, chat_id: int) -> None:
         """The model made a joke: restart the cooldown with the normal gap."""

@@ -1,6 +1,6 @@
 import unittest
 
-from jarvis.humor import HumorGate, is_serious
+from jarvis.humor import HumorGate, is_informational, is_serious
 
 
 class IsSeriousTest(unittest.TestCase):
@@ -15,6 +15,17 @@ class IsSeriousTest(unittest.TestCase):
     def test_casual_is_not_serious(self):
         for text in ("bom dia", "me conta uma curiosidade", "ok", "VLW"):
             self.assertFalse(is_serious(text), text)
+
+
+class IsInformationalTest(unittest.TestCase):
+    def test_information_requests(self):
+        for text in ("oq é um webhook msm?", "me explica o que é um container", "Qual a diferença entre git merge e rebase?",
+                     "como funciona o DNS", "pra que serve um proxy", "Explique o que é CORS"):
+            self.assertTrue(is_informational(text), text)
+
+    def test_chatting_is_not_informational(self):
+        for text in ("bom dia", "tô cansado hoje", "me conta uma curiosidade", "hoje foi um dia longo", "explicando pra ele ontem"):
+            self.assertFalse(is_informational(text), text)
 
 
 class HumorGateTest(unittest.TestCase):
@@ -58,6 +69,11 @@ class HumorGateTest(unittest.TestCase):
         self.assertEqual([self.turn(gate, 1) for _ in range(4)], [False, False, False, True])
         # that joke restores the normal gap
         self.assertEqual([self.turn(gate, 1) for _ in range(2)], [False, True])
+
+    def test_information_requests_never_get_humor_and_keep_the_slot(self):
+        gate = HumorGate(min_gap=2)
+        self.assertFalse(self.turn(gate, 1, "me explica o que é um webhook"))
+        self.assertTrue(self.turn(gate, 1, "bom dia"))
 
     def test_chats_are_independent(self):
         gate = HumorGate(min_gap=5)
