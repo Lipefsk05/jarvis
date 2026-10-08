@@ -2,7 +2,8 @@ import random
 import unittest
 
 from jarvis.style import (
-    AVOID_RULE, GREETING_POOL, HELP_HINTS, STIFF_RULE, THANKS_HINTS, StyleHints, is_greeting, is_thanks,
+    AVOID_RULE, GREETING_AND_REQUEST, GREETING_POOL, HELP_HINTS, NOT_A_GREETING, STIFF_RULE, THANKS_HINTS,
+    StyleHints, is_greeting, is_thanks, starts_with_greeting,
 )
 
 
@@ -24,6 +25,22 @@ class ClassificationTest(unittest.TestCase):
             self.assertFalse(is_thanks(text), text)
 
 
+class PraiseIsNotAGreetingTest(unittest.TestCase):
+    def test_praise_and_questions_get_the_not_a_greeting_hint(self):
+        # The live bug: "Kkkkkk boa, mas eai oq vc pode fazer?" was answered with "Boa noite, senhor."
+        hints = StyleHints(random.Random(6))
+        for text in ("Kkkkkk boa, mas eai oq vc pode fazer?", "boa", "boa!", "show", "top demais", "kkkk boa essa"):
+            self.assertFalse(is_greeting(text), text)
+            self.assertEqual(hints.hint_for(1, text), NOT_A_GREETING, text)
+
+    def test_greeting_followed_by_a_request(self):
+        self.assertTrue(starts_with_greeting("oi, preciso de ajuda com o deploy de ontem"))
+        self.assertTrue(starts_with_greeting("boa tarde, quais tarefas eu tenho hoje?"))
+        self.assertFalse(starts_with_greeting("kkkk boa, mas eai o que você pode fazer?"))
+        self.assertFalse(starts_with_greeting("oi"))  # a bare greeting is handled by is_greeting
+        self.assertEqual(StyleHints().hint_for(1, "oi, preciso de ajuda com o deploy de ontem"), GREETING_AND_REQUEST)
+
+
 class StyleHintsTest(unittest.TestCase):
     def test_never_repeats_the_previous_hint_in_a_chat(self):
         hints = StyleHints(random.Random(1))
@@ -41,7 +58,7 @@ class StyleHintsTest(unittest.TestCase):
     def test_thanks_pool_and_neutral_messages(self):
         hints = StyleHints(random.Random(3))
         self.assertIn(hints.hint_for(1, "valeu").split(f" {STIFF_RULE}")[0], THANKS_HINTS)
-        self.assertEqual(hints.hint_for(1, "me explica o que é um container"), "")
+        self.assertEqual(hints.hint_for(1, "me explica o que é um container"), NOT_A_GREETING)
 
     def test_chats_have_independent_memory(self):
         a, b = StyleHints(random.Random(4)), StyleHints(random.Random(4))

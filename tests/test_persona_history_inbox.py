@@ -79,3 +79,19 @@ class InboxTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoInventionTest(unittest.TestCase):
+    def test_missing_tasks_context_tells_the_model_not_to_invent(self):
+        out = render("{{tarefas_mind}}", humor_allowed=False, now=NOW)
+        self.assertIn("não invente", out)
+
+    def test_real_persona_forbids_inventing_user_data(self):
+        template = load_template(REPO_ROOT / "persona" / "jarvis.md")
+        self.assertIn("Nunca invente", template)
+
+    def test_real_persona_lists_the_only_existing_commands(self):
+        template = load_template(REPO_ROOT / "persona" / "jarvis.md")
+        self.assertIn("únicos comandos que existem", template)
+        for command in ("/anota", "/tarefas", "/uso", "/esquece"):
+            self.assertIn(command, template)

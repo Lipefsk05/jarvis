@@ -23,7 +23,7 @@ def parse_note_request(text: str) -> str | None:
 
 
 _TASKS_REQUEST = re.compile(
-    r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta) (?:pra|para) fazer)\b"
+    r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|pendentes?)\b"
 )
 _STOPWORDS = {
     "quais", "tarefas", "tarefa", "tenho", "pendencias", "pendencia", "pendentes", "pendente", "minhas",

@@ -83,7 +83,8 @@ class MindTasksTest(unittest.TestCase):
 
 class TaskRequestTest(unittest.TestCase):
     def test_wants_tasks(self):
-        for text in ("quais tarefas eu tenho?", "minhas pendências", "tarefas de carreira", "o que eu preciso pra fazer hoje", "to-do"):
+        for text in ("quais tarefas eu tenho?", "minhas pendências", "tarefas de carreira", "o que eu preciso pra fazer hoje", "to-do",
+                     "o que eu tenho que fazer hoje?", "o que falta fazer", "o que está pendente?"):
             self.assertTrue(wants_tasks(text), text)
         for text in ("oi", "como está o tempo", "me explica o que é um container"):
             self.assertFalse(wants_tasks(text), text)

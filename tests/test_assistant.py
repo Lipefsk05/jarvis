@@ -118,11 +118,11 @@ class AssistantTest(unittest.TestCase):
             a._mind_dir = root
             a._template = "SYS tarefas={{tarefas_mind}}"
             a.respond(1, "oi")
-            self.assertIn("não perguntou", talker.calls[0][0])
+            self.assertIn("nenhum dado de tarefas", talker.calls[0][0])
             a.respond(1, "quais são minhas tarefas de carreira?")
             self.assertIn("Candidatura CLT", talker.calls[1][0])
 
-    def test_greeting_gets_a_style_hint_and_other_messages_do_not(self):
+    def test_greeting_gets_a_variety_hint_and_other_messages_an_explicit_no_greeting_hint(self):
         with tempfile.TemporaryDirectory() as tmp:
             talker = FakeTalker()
             a, _ = self.make(tmp, talker)
@@ -130,7 +130,7 @@ class AssistantTest(unittest.TestCase):
             a.respond(1, "bom dia")
             a.respond(1, "me explica o que é DNS")
             self.assertIn("Cumprimente", talker.calls[0][0])
-            self.assertIn("dica=(nenhuma)", talker.calls[1][0])
+            self.assertIn("não é um cumprimento", talker.calls[1][0])
 
     def test_blocked_when_over_budget_without_calling_model(self):
         with tempfile.TemporaryDirectory() as tmp:

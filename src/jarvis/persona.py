@@ -11,7 +11,7 @@ WEEKDAYS = (
 NO_STATE = "(nenhum estado registrado ainda)"
 NO_SUMMARY = "(conversa recém-iniciada)"
 NO_HINT = "(nenhuma)"
-NO_TASKS = "(o senhor não perguntou por tarefas nesta mensagem)"
+NO_TASKS = "(nenhum dado de tarefas nesta mensagem: não invente nenhuma)"
 
 
 def load_template(path: Path) -> str:
