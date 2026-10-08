@@ -38,7 +38,8 @@ def split_joke(text: str) -> tuple[str, bool]:
         inner = (match.group(1) or "").strip()
         if len(inner.split()) >= MIN_JOKE_WORDS:
             jokes.append(inner)
-            return inner
+            before = match.string[match.start() - 1] if match.start() > 0 else " "
+            return inner if before.isspace() else " " + inner
         return ""
 
     clean = _JOKE_TAG_RE.sub(unwrap, text)

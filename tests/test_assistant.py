@@ -84,6 +84,7 @@ class AssistantTest(unittest.TestCase):
             ("Veja a nota [1] acima.", "Veja a nota [1] acima.", False),
             ("Veja [[humor: sim]] isso.", "Veja isso.", False),
             ("A [[humor: piada com várias palavras]] fica no meio.", "A piada com várias palavras fica no meio.", True),
+            ("Boa tarde, senhor.[[humor: Prefiro a compostura de um mordomo.]]", "Boa tarde, senhor. Prefiro a compostura de um mordomo.", True),
         ]
         for raw, expected, joked in cases:
             self.assertEqual(split_joke(raw), (expected, joked), raw)
