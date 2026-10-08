@@ -39,6 +39,6 @@ def wants_tasks(text: str) -> bool:
     return bool(_TASKS_REQUEST.search(fold(text)))
 
 
-def task_query_words(text: str) -> list[str]:
+def task_query_words(text: str, min_len: int = 4) -> list[str]:
     """Words that may name an area or section ("tarefas de carreira" -> ["carreira"])."""
-    return [w for w in re.findall(r"[a-z0-9]{4,}", fold(text)) if w not in _STOPWORDS]
+    return [w for w in re.findall(r"[a-z0-9]{%d,}" % min_len, fold(text)) if w not in _STOPWORDS]

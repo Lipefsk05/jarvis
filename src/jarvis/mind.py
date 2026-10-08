@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +89,60 @@ def select(tasks: list[Task], words: list[str]) -> list[Task]:
     if strict:
         return strict
     return [t for t in tasks if any(w in _haystack(t) for w in wanted)]
+
+
+SIMILARITY_CUTOFF = 0.72  # real typos scored 0.75-0.94, ordinary words stayed under 0.6
+
+
+def vocabulary(tasks: list[Task]) -> set[str]:
+    """Folded names a user may type: group, area (whole and by part) and section words."""
+    words: set[str] = set()
+    for task in tasks:
+        words.add(fold(task.group))
+        area = fold(task.area)
+        words.add(area)
+        words.update(p for p in area.split("-") if len(p) >= 3)
+        words.update(w for w in re.findall(r"[a-z0-9]{4,}", fold(task.section)))
+    return words
+
+
+def _similar(a: str, b: str) -> float:
+    if len(a) >= 3 and sorted(a) == sorted(b):  # transposed letters: "dmoo" -> "domo"
+        return 1.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def suggest(tasks: list[Task], word: str) -> str | None:
+    """The closest known area or section word for a probable typo, or None."""
+    target = fold(word)
+    best, best_score = None, 0.0
+    for candidate in vocabulary(tasks):
+        score = _similar(target, candidate)
+        if score > best_score:
+            best, best_score = candidate, score
+    return best if best_score >= SIMILARITY_CUTOFF else None
+
+
+def resolve_query(tasks: list[Task], words: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """Fix likely typos in the words of an explicit /tarefas query.
+
+    A word that already matches something is kept; one that matches nothing is replaced by
+    the closest known name. Returns the words to use and the (typed, used) corrections."""
+    haystacks = [_haystack(t) for t in tasks]
+    out: list[str] = []
+    fixes: list[tuple[str, str]] = []
+    for word in words:
+        folded = fold(word)
+        if any(folded in h for h in haystacks):
+            out.append(word)
+            continue
+        guess = suggest(tasks, word)
+        if guess and guess != folded:
+            out.append(guess)
+            fixes.append((word, guess))
+        else:
+            out.append(word)
+    return out, fixes
 
 
 def render_items(items: list[Task], limit: int = 25) -> str:

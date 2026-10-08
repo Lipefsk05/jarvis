@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from jarvis.commands import task_query_words, wants_tasks
-from jarvis.mind import load_pending, render_items, select, short_title, summary, tasks_context
+from jarvis.mind import load_pending, render_items, resolve_query, select, short_title, suggest, summary, tasks_context
 
 
 def vault(tmp):
@@ -81,6 +81,38 @@ class MindTasksTest(unittest.TestCase):
         self.assertEqual(load_pending(Path("/nonexistent/vault")), [])
 
 
+class TypoToleranceTest(unittest.TestCase):
+    def tasks(self, tmp):
+        return load_pending(vault(tmp))
+
+    def test_suggests_the_closest_name_for_real_typos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = self.tasks(tmp)
+            self.assertEqual(suggest(tasks, "dindim"), "dindin")
+            self.assertEqual(suggest(tasks, "carrera"), "carreira")   # missing letter
+            self.assertEqual(suggest(tasks, "dinidn"), "dindin")      # transposed letters
+            self.assertEqual(suggest(tasks, "jarvs"), "jarvis")       # from a section heading
+
+    def test_ordinary_words_are_not_forced_onto_a_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = self.tasks(tmp)
+            for word in ("hoje", "semana", "fazer", "xyzzy"):
+                self.assertIsNone(suggest(tasks, word), word)
+
+    def test_resolve_query_keeps_good_words_and_fixes_bad_ones(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = self.tasks(tmp)
+            self.assertEqual(resolve_query(tasks, ["carreira"]), (["carreira"], []))
+            words, fixes = resolve_query(tasks, ["dindn", "marketing"])
+            self.assertEqual(words, ["dindin", "marketing"])
+            self.assertEqual(fixes, [("dindn", "dindin")])
+            self.assertIn("dindin", {t.area for t in select(tasks, words)})
+
+    def test_unknown_word_stays_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(resolve_query(self.tasks(tmp), ["banana"]), (["banana"], []))
+
+
 class TaskRequestTest(unittest.TestCase):
     def test_wants_tasks(self):
         for text in ("quais tarefas eu tenho?", "minhas pendências", "tarefas de carreira", "o que eu preciso pra fazer hoje", "to-do",
@@ -93,6 +125,9 @@ class TaskRequestTest(unittest.TestCase):
         self.assertEqual(task_query_words("quais tarefas eu tenho?"), [])
         self.assertEqual(task_query_words("tarefas de carreira"), ["carreira"])
         self.assertEqual(task_query_words("e as pendências do Dindin?"), ["dindin"])
+        self.assertEqual(task_query_words("domo", min_len=3), ["domo"])
+        self.assertEqual(task_query_words("dmo", min_len=3), ["dmo"])
+        self.assertEqual(task_query_words("dmo"), [])  # the free-text path keeps the 4-letter minimum
 
 
 if __name__ == "__main__":
