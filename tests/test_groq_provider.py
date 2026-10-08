@@ -43,6 +43,12 @@ class GroqFallbackTest(unittest.TestCase):
         talker._complete = fake_complete
         return talker
 
+    def test_reasoning_kept_minimal_only_for_gpt_oss(self):
+        t = self.make({})
+        self.assertEqual(t._extra("openai/gpt-oss-120b"), {"reasoning_effort": "low"})
+        self.assertEqual(t._extra("openai/gpt-oss-20b"), {"reasoning_effort": "low"})
+        self.assertEqual(t._extra("qwen/qwen3.8-27b"), {})
+
     def test_success_reports_tokens(self):
         t = self.make({"a": completion("Boa tarde, senhor.", prompt=120, out=18)})
         r = t.reply("sys", self.MSGS)

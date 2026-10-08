@@ -37,8 +37,8 @@ class SettingsTest(unittest.TestCase):
 
     def test_groq_defaults_and_key_check(self):
         s = self.load({"JARVIS_TALKER_PROVIDER": "groq"})
-        self.assertEqual(s.model, "llama-3.3-70b-versatile")
-        self.assertEqual(s.fallback_models, ("llama-3.1-8b-instant",))
+        self.assertEqual(s.model, "openai/gpt-oss-120b")
+        self.assertEqual(s.fallback_models, ("openai/gpt-oss-20b",))
         self.assertEqual((s.price_in, s.price_out), (0.0, 0.0))
         self.assertTrue(any("GROQ_API_KEY" in p for p in s.problems()))
         ok = self.load({"JARVIS_TALKER_PROVIDER": "groq", "GROQ_API_KEY": "k"})

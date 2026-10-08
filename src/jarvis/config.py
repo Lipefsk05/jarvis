@@ -11,13 +11,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-5-5",
     "gemini": "gemini-2.5-flash",
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
 }
 # Tried in order when the main model is overloaded or unavailable.
 DEFAULT_FALLBACKS = {
     "anthropic": (),
     "gemini": ("gemini-3.5-flash",),
-    "groq": ("llama-3.1-8b-instant",),
+    "groq": ("openai/gpt-oss-20b",),
 }
 # Reference prices in USD per million tokens (input, output). Haiku 4.5 is the
 # most recent price confirmed; override with the JARVIS_PRICE_* variables.

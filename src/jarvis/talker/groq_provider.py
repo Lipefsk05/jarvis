@@ -9,7 +9,7 @@ NO_FALLBACK_CODES = {400, 401, 403}
 
 
 class GroqTalker:
-    def __init__(self, api_key: str, models: list[str], max_tokens: int = 400) -> None:
+    def __init__(self, api_key: str, models: list[str], max_tokens: int = 700) -> None:
         from groq import Groq  # imported lazily so tests do not need the package
 
         # max_retries=0: fail fast and let our own model chain decide what to try next.
@@ -17,11 +17,18 @@ class GroqTalker:
         self._models = [m for m in models if m]
         self._max_tokens = max_tokens
 
+    @staticmethod
+    def _extra(model: str) -> dict:
+        # gpt-oss models reason before answering and those tokens count against
+        # max_tokens; keep it minimal for a conversational assistant.
+        return {"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {}
+
     def _complete(self, model: str, system: str, messages: list[dict[str, str]]):
         return self._client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": system}, *messages],
             max_tokens=self._max_tokens,
+            **self._extra(model),
         )
 
     def reply(self, system: str, messages: list[dict[str, str]]) -> Reply:
