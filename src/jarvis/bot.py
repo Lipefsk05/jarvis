@@ -92,6 +92,8 @@ def build_application(settings: Settings) -> Application:
         reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
         markup = feedback_markup() if reply.humor_offered else None
         await message.reply_text(reply.text, reply_markup=markup)
+        if reply.provider and reply.provider != settings.provider:
+            await message.reply_text(f"↪ respondido pelo provedor reserva ({reply.provider}).")
         if reply.warn_budget:
             await message.reply_text("Aviso, senhor: já usei 80% do teto de gasto de hoje.")
 
