@@ -40,22 +40,40 @@ class AssistantTest(unittest.TestCase):
             a, budget = self.make(tmp, talker)
             r = a.respond(1, "oi")
             self.assertEqual(r.text, "Boa tarde, senhor.")
-            self.assertTrue(r.humor_offered)
+            self.assertFalse(r.humor_offered)  # no joke mark -> no button
             self.assertAlmostEqual(budget.spent_today(), 1.0)
             system, messages = talker.calls[0]
             self.assertIn("humor=SIM", system)
             self.assertEqual(messages, [{"role": "user", "content": "oi"}])
 
-    def test_second_turn_sends_history_and_blocks_humor(self):
+    def test_joke_mark_is_stripped_and_flags_the_reply(self):
         with tempfile.TemporaryDirectory() as tmp:
-            talker = FakeTalker()
+            talker = FakeTalker([Reply("Pontualidade rara, senhor. [[humor]]", 10, 5)])
             a, _ = self.make(tmp, talker)
-            a.respond(1, "oi")
-            r = a.respond(1, "e aí")
-            self.assertFalse(r.humor_offered)
-            system, messages = talker.calls[1]
-            self.assertIn("humor=NÃO", system)
-            self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user"])
+            r = a.respond(1, "oi")
+            self.assertEqual(r.text, "Pontualidade rara, senhor.")
+            self.assertTrue(r.humor_offered)
+            a.respond(1, "e aí")
+            history = talker.calls[1][1]
+            self.assertEqual(history[1], {"role": "assistant", "content": "Pontualidade rara, senhor."})
+
+    def test_cooldown_starts_only_after_a_real_joke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker([Reply("sem graça", 10, 5), Reply("piada [[humor]]", 10, 5), Reply("x", 10, 5)])
+            a, _ = self.make(tmp, talker)
+            a.respond(1, "oi")        # permitted, no joke made -> slot kept
+            a.respond(1, "e aí")      # permitted again, joke made
+            a.respond(1, "certo")     # now in cooldown
+            self.assertIn("humor=SIM", talker.calls[0][0])
+            self.assertIn("humor=SIM", talker.calls[1][0])
+            self.assertIn("humor=NÃO", talker.calls[2][0])
+
+    def test_reply_that_is_only_the_mark_counts_as_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker([Reply("[[humor]]", 10, 5)])
+            a, _ = self.make(tmp, talker)
+            self.assertEqual(a.respond(1, "oi").text, FAILED_MESSAGE)
+            self.assertEqual(a._history.messages(1), [])
 
     def test_blocked_when_over_budget_without_calling_model(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -39,7 +39,12 @@ def is_serious(text: str) -> bool:
 
 
 class HumorGate:
-    """Per-chat cooldown on top of the seriousness check."""
+    """Per-chat cooldown on top of the seriousness check.
+
+    `permitted` says whether a joke may be tried in this reply. The cooldown only
+    restarts when the model actually joked (`record_joke`), so a permitted slot is
+    not wasted on a reply that had nothing funny to say.
+    """
 
     def __init__(self, min_gap: int = 4, penalty_gap: int = 10) -> None:
         self.min_gap = min_gap
@@ -47,19 +52,17 @@ class HumorGate:
         self._since: dict[int, int] = {}
         self._need: dict[int, int] = {}
 
-    def decide(self, chat_id: int, text: str) -> bool:
-        """Count one turn and say whether a joke is allowed in this reply."""
+    def permitted(self, chat_id: int, text: str) -> bool:
+        """Count one turn and say whether a joke may be tried in this reply."""
         need = self._need.get(chat_id, self.min_gap)
         since = self._since.get(chat_id, need)  # first turn may joke
-        if is_serious(text):
-            self._since[chat_id] = since + 1
-            return False
-        if since >= need:
-            self._since[chat_id] = 0
-            self._need[chat_id] = self.min_gap
-            return True
         self._since[chat_id] = since + 1
-        return False
+        return since >= need and not is_serious(text)
+
+    def record_joke(self, chat_id: int) -> None:
+        """The model made a joke: restart the cooldown with the normal gap."""
+        self._since[chat_id] = 0
+        self._need[chat_id] = self.min_gap
 
     def feedback_not_funny(self, chat_id: int) -> None:
         """The user said the joke missed: restart the cooldown with a longer gap."""

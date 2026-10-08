@@ -20,6 +20,8 @@ BLOCKED_MESSAGE = (
     "ou assim que o senhor liberar o limite."
 )
 FAILED_MESSAGE = "Não consegui falar com o modelo agora, senhor. Tente de novo em instantes."
+# The model appends this mark only when it actually made a joke; it is stripped before sending.
+JOKE_MARK = "[[humor]]"
 
 
 @dataclass(frozen=True)
@@ -62,10 +64,10 @@ class Assistant:
         if not self._budget.can_spend():
             return AssistantReply(BLOCKED_MESSAGE, blocked=True)
 
-        humor = self._gate.decide(chat_id, text)
+        permitted = self._gate.permitted(chat_id, text)
         system = render(
             self._template,
-            humor_allowed=humor,
+            humor_allowed=permitted,
             now=self._clock(),
             estado_atual=self._estado_atual(),
         )
@@ -77,10 +79,19 @@ class Assistant:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)
 
-        self._history.add(chat_id, "assistant", reply.text)
         self._budget.add(reply.input_tokens, reply.output_tokens)
+        joked = JOKE_MARK in reply.text
+        clean = reply.text.replace(JOKE_MARK, "").strip()
+        if not clean:
+            self._history.drop_last(chat_id)
+            return AssistantReply(FAILED_MESSAGE)
+        if joked:
+            if not permitted:
+                log.warning("Model joked while humor was not permitted")
+            self._gate.record_joke(chat_id)
+        self._history.add(chat_id, "assistant", clean)
         return AssistantReply(
-            reply.text,
-            humor_offered=humor,
+            clean,
+            humor_offered=joked,
             warn_budget=self._budget.should_warn(),
         )
