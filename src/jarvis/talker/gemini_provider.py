@@ -22,11 +22,15 @@ class GeminiTalker:
 
     def _config(self, model: str, system: str):
         kwargs = {"system_instruction": system, "max_output_tokens": self._max_tokens}
-        # 2.5 models think by default and thinking tokens count against
-        # max_output_tokens, which truncates short answers. A conversational
-        # assistant does not need them.
+        # These models think by default and thinking tokens count against
+        # max_output_tokens, which truncates or empties short answers (seen live).
+        # A conversational assistant does not need them.
         if model.startswith("gemini-2.5"):
             kwargs["thinking_config"] = self._types.ThinkingConfig(thinking_budget=0)
+        elif model.startswith("gemini-3"):
+            kwargs["thinking_config"] = self._types.ThinkingConfig(
+                thinking_level=self._types.ThinkingLevel.MINIMAL
+            )
         return self._types.GenerateContentConfig(**kwargs)
 
     def _generate(self, model: str, system: str, contents: list):
@@ -52,6 +56,11 @@ class GeminiTalker:
                 last_error = f"{type(exc).__name__}:{code}"
                 if code in NO_FALLBACK_CODES:
                     break
+                continue
+            candidates = getattr(response, "candidates", None) or []
+            finish = str(getattr(candidates[0], "finish_reason", "")) if candidates else ""
+            if "MAX_TOKENS" in finish:  # a sentence cut in half is worse than trying another model
+                last_error = "MaxTokens"
                 continue
             text = (response.text or "").strip()
             if not text:

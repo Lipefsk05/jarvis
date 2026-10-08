@@ -70,10 +70,23 @@ class GeminiFallbackTest(unittest.TestCase):
             t.reply("sys", self.MSGS)
         self.assertIn("504", str(ctx.exception))
 
-    def test_thinking_disabled_only_for_2_5_models(self):
+    def test_thinking_is_minimised_per_model_family(self):
+        from google.genai import types
+
         t = self.make({})
-        self.assertIsNotNone(t._config("gemini-2.5-flash", "s").thinking_config)
-        self.assertIsNone(t._config("gemini-3.5-flash", "s").thinking_config)
+        self.assertEqual(t._config("gemini-2.5-flash", "s").thinking_config.thinking_budget, 0)
+        self.assertEqual(
+            t._config("gemini-3.5-flash", "s").thinking_config.thinking_level,
+            types.ThinkingLevel.MINIMAL,
+        )
+        self.assertIsNone(t._config("gemini-flash-latest", "s").thinking_config)
+
+    def test_truncated_reply_is_discarded_and_next_model_tried(self):
+        cut = response("Gostaria de ser o portador de boas notícias,")
+        cut.candidates = [SimpleNamespace(finish_reason="FinishReason.MAX_TOKENS")]
+        t = self.make({"a": cut, "b": response("Ainda não consigo, senhor.")})
+        self.assertEqual(t.reply("sys", self.MSGS).text, "Ainda não consigo, senhor.")
+        self.assertEqual(t.tried, ["a", "b"])
 
 
 if __name__ == "__main__":
