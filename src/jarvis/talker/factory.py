@@ -13,5 +13,5 @@ def build_talker(settings: Settings) -> Talker:
     if settings.provider == "gemini":
         from .gemini_provider import GeminiTalker
 
-        return GeminiTalker(settings.gemini_api_key, settings.model)
+        return GeminiTalker(settings.gemini_api_key, [settings.model, *settings.fallback_models])
     raise ValueError(f"unknown provider: {settings.provider}")

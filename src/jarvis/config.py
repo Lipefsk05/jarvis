@@ -10,7 +10,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-5-5",
-    "gemini": "gemini-flash-latest",
+    "gemini": "gemini-2.5-flash",
+}
+# Tried in order when the main model is overloaded or unavailable.
+DEFAULT_FALLBACKS = {
+    "anthropic": (),
+    "gemini": ("gemini-3.5-flash",),
 }
 # Reference prices in USD per million tokens (input, output). Haiku 4.5 is the
 # most recent price confirmed; override with the JARVIS_PRICE_* variables.
@@ -43,6 +48,12 @@ def _opt_float(value: str | None) -> float | None:
     return float(value.replace(",", "."))
 
 
+def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
+    if value is None or not value.strip():
+        return DEFAULT_FALLBACKS.get(provider, ())
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def _parse_ids(value: str | None) -> frozenset[int]:
     if not value:
         return frozenset()
@@ -58,6 +69,7 @@ def _parse_ids(value: str | None) -> frozenset[int]:
 class Settings:
     provider: str
     model: str
+    fallback_models: tuple[str, ...]
     anthropic_api_key: str
     gemini_api_key: str
     telegram_token: str
@@ -88,6 +100,7 @@ class Settings:
         return cls(
             provider=provider,
             model=(values.get("JARVIS_TALKER_MODEL") or DEFAULT_MODELS.get(provider, "")).strip(),
+            fallback_models=_parse_models(values.get("JARVIS_TALKER_FALLBACK_MODELS"), provider),
             anthropic_api_key=(values.get("ANTHROPIC_API_KEY") or "").strip(),
             gemini_api_key=(values.get("GEMINI_API_KEY") or "").strip(),
             telegram_token=(values.get("TELEGRAM_BOT_TOKEN") or "").strip(),

@@ -32,7 +32,13 @@ class SettingsTest(unittest.TestCase):
     def test_gemini_is_free_by_default(self):
         s = self.load({"JARVIS_TALKER_PROVIDER": "gemini"})
         self.assertEqual((s.price_in, s.price_out), (0.0, 0.0))
-        self.assertEqual(s.model, "gemini-flash-latest")
+        self.assertEqual(s.model, "gemini-2.5-flash")
+        self.assertEqual(s.fallback_models, ("gemini-3.5-flash",))
+
+    def test_fallback_models_override_and_anthropic_default(self):
+        self.assertEqual(self.load({}).fallback_models, ())
+        s = self.load({"JARVIS_TALKER_FALLBACK_MODELS": " a , b ,"})
+        self.assertEqual(s.fallback_models, ("a", "b"))
 
     def test_price_override_and_comma_decimal(self):
         s = self.load({"JARVIS_PRICE_IN_PER_MTOK": "0,5", "JARVIS_DAILY_BUDGET_USD": "1,5"})
