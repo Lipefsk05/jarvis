@@ -9,6 +9,9 @@ class ParseNoteRequestTest(unittest.TestCase):
         self.assertEqual(parse_note_request("Anota: ligar pro Matheus"), "ligar pro Matheus")
         self.assertEqual(parse_note_request("  anote - revisar o contrato"), "revisar o contrato")
         self.assertEqual(parse_note_request("anotar isso\nem duas linhas"), "isso\nem duas linhas")
+        self.assertEqual(parse_note_request("anota que preciso comprar queijo"), "preciso comprar queijo")
+        self.assertEqual(parse_note_request("anota aí: ligar pro banco"), "ligar pro banco")
+        self.assertEqual(parse_note_request("anota quebrar o gelo"), "quebrar o gelo")  # "que" only as a whole word
 
     def test_bare_word_asks_what_to_note(self):
         self.assertEqual(parse_note_request("anota"), "")

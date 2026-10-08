@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 
 _NOTE = re.compile(r"^\s*(?:anota|anote|anotar)\b[\s:,\-]*(.*)$", re.IGNORECASE | re.DOTALL)
+# "anota que preciso comprar queijo" -> the filler "que" is not part of the note.
+_FILLER = re.compile(r"^(?:que|aí|ai)\b[\s:,\-]*", re.IGNORECASE)
 
 
 def parse_note_request(text: str) -> str | None:
@@ -15,4 +17,4 @@ def parse_note_request(text: str) -> str | None:
     match = _NOTE.match(text)
     if not match:
         return None
-    return match.group(1).strip()
+    return _FILLER.sub("", match.group(1).strip()).strip()
