@@ -1,0 +1,24 @@
+# Secrets and local config
+.env
+.env.*
+!config.example.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Models, audio and runtime state
+models/
+*.onnx
+*.onnx.data
+*.wav
+state/
+logs/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
