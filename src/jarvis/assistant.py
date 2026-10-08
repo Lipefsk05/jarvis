@@ -21,11 +21,30 @@ BLOCKED_MESSAGE = (
     "ou assim que o senhor liberar o limite."
 )
 FAILED_MESSAGE = "Não consegui falar com o modelo agora, senhor. Tente de novo em instantes."
-# The model appends this mark only when it actually made a joke; it is stripped before sending.
-JOKE_MARK = "[[humor]]"
-# Models sometimes garble the mark ("[humor]", "[[Humor]]") or leave a stray "]]".
-_JOKE_MARK_RE = re.compile(r"\[{1,2}\s*humor\s*\]{1,2}", re.IGNORECASE)
+# The model writes the joke itself inside a tag, "[[humor: the joke]]". The tag is
+# unwrapped (the joke stays in the text), and it only counts as a joke when real text
+# is inside: models like to append a bare "[[humor]]" as a ritual, which must not
+# trigger the feedback button or start the cooldown.
+_JOKE_TAG_RE = re.compile(r"\[{1,2}\s*humor\s*(?::\s*(.*?))?\s*\]{1,2}", re.IGNORECASE | re.DOTALL)
 _STRAY_CLOSER_RE = re.compile(r"\s*\]\]\s*$")
+MIN_JOKE_WORDS = 3
+
+
+def split_joke(text: str) -> tuple[str, bool]:
+    """Return (clean text, whether a real joke was inside a humor tag)."""
+    jokes: list[str] = []
+
+    def unwrap(match: re.Match) -> str:
+        inner = (match.group(1) or "").strip()
+        if len(inner.split()) >= MIN_JOKE_WORDS:
+            jokes.append(inner)
+            return inner
+        return ""
+
+    clean = _JOKE_TAG_RE.sub(unwrap, text)
+    clean = _STRAY_CLOSER_RE.sub("", clean)
+    clean = re.sub(r"[ \t]{2,}", " ", clean).strip()
+    return clean, bool(jokes)
 
 
 @dataclass(frozen=True)
@@ -85,8 +104,7 @@ class Assistant:
             return AssistantReply(FAILED_MESSAGE)
 
         self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd)
-        joked = bool(_JOKE_MARK_RE.search(reply.text))
-        clean = _STRAY_CLOSER_RE.sub("", _JOKE_MARK_RE.sub("", reply.text)).strip()
+        clean, joked = split_joke(reply.text)
         if not clean:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)

@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from jarvis.assistant import BLOCKED_MESSAGE, FAILED_MESSAGE, Assistant
+from jarvis.assistant import BLOCKED_MESSAGE, FAILED_MESSAGE, Assistant, split_joke
 from jarvis.budget import Budget
 from jarvis.conversation import History
 from jarvis.humor import HumorGate
@@ -54,33 +54,44 @@ class AssistantTest(unittest.TestCase):
             self.assertEqual(r.provider, "groq")
             self.assertEqual(budget.spent_today(), 0.0)  # default price would have said US$ 5
 
-    def test_joke_mark_is_stripped_and_flags_the_reply(self):
+    def test_joke_tag_is_unwrapped_and_flags_the_reply(self):
         with tempfile.TemporaryDirectory() as tmp:
-            talker = FakeTalker([Reply("Pontualidade rara, senhor. [[humor]]", 10, 5)])
+            talker = FakeTalker([Reply("Bom dia, senhor. [[humor: Pontualidade rara, para variar.]]", 10, 5)])
             a, _ = self.make(tmp, talker)
             r = a.respond(1, "oi")
-            self.assertEqual(r.text, "Pontualidade rara, senhor.")
+            self.assertEqual(r.text, "Bom dia, senhor. Pontualidade rara, para variar.")
             self.assertTrue(r.humor_offered)
             a.respond(1, "e aí")
             history = talker.calls[1][1]
-            self.assertEqual(history[1], {"role": "assistant", "content": "Pontualidade rara, senhor."})
+            self.assertEqual(history[1], {"role": "assistant", "content": "Bom dia, senhor. Pontualidade rara, para variar."})
 
-    def test_garbled_marks_and_stray_closer_are_cleaned(self):
+    def test_bare_humor_tag_is_not_a_joke(self):
+        # Seen live with gpt-oss-120b: "[[humor]]" appended to plain greetings and explanations.
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker([Reply("Bom dia, senhor. [[humor]]", 10, 5), Reply("ok", 10, 5)])
+            a, _ = self.make(tmp, talker)
+            r = a.respond(1, "oi")
+            self.assertEqual(r.text, "Bom dia, senhor.")
+            self.assertFalse(r.humor_offered)
+            a.respond(1, "e aí")
+            self.assertIn("humor=SIM", talker.calls[1][0])  # the slot was not consumed
+
+    def test_split_joke_cases(self):
         cases = [
-            ("Boa, senhor. [humor]", "Boa, senhor.", True),
-            ("Boa, senhor. [[Humor]]", "Boa, senhor.", True),
+            ("Boa, senhor. [humor: sempre pontual, esse senhor]", "Boa, senhor. sempre pontual, esse senhor", True),
+            ("Boa, senhor. [[Humor]]", "Boa, senhor.", False),
             ("Qual foi o erro, senhor?]]", "Qual foi o erro, senhor?", False),
             ("Veja a nota [1] acima.", "Veja a nota [1] acima.", False),
+            ("Veja [[humor: sim]] isso.", "Veja isso.", False),
+            ("A [[humor: piada com várias palavras]] fica no meio.", "A piada com várias palavras fica no meio.", True),
         ]
         for raw, expected, joked in cases:
-            with tempfile.TemporaryDirectory() as tmp:
-                a, _ = self.make(tmp, FakeTalker([Reply(raw, 10, 5)]))
-                r = a.respond(1, "oi")
-                self.assertEqual((r.text, r.humor_offered), (expected, joked), raw)
+            self.assertEqual(split_joke(raw), (expected, joked), raw)
 
     def test_cooldown_starts_only_after_a_real_joke(self):
         with tempfile.TemporaryDirectory() as tmp:
-            talker = FakeTalker([Reply("sem graça", 10, 5), Reply("piada [[humor]]", 10, 5), Reply("x", 10, 5)])
+            talker = FakeTalker([Reply("sem graça", 10, 5),
+                                 Reply("ok [[humor: uma observação seca e espirituosa]]", 10, 5), Reply("x", 10, 5)])
             a, _ = self.make(tmp, talker)
             a.respond(1, "oi")        # permitted, no joke made -> slot kept
             a.respond(1, "e aí")      # permitted again, joke made

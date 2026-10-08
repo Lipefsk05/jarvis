@@ -34,7 +34,7 @@ def render(
     resumo: str = "",
 ) -> str:
     replacements = {
-        "{{humor_permitido}}": "SIM (só se houver um fato real que justifique)" if humor_allowed else "NÃO",
+        "{{humor_permitido}}": "SIM, mas a maioria das respostas NÃO deve ter piada: só faça uma se for realmente boa e ligada a um fato real" if humor_allowed else "NÃO",
         "{{data_hora}}": format_now(now),
         "{{estado_atual}}": estado_atual.strip() or NO_STATE,
         "{{resumo_conversa}}": resumo.strip() or NO_SUMMARY,
