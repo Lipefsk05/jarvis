@@ -16,6 +16,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -111,11 +112,18 @@ def build_application(settings: Settings) -> Application:
         await query.answer("Anotado, senhor.")
         await query.edit_message_reply_markup(reply_markup=None)
 
+    async def on_any(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        kind = "callback" if update.callback_query else ("message" if update.effective_message else "other")
+        log.info("Update received: kind=%s user_id=%s allowed=%s", kind,
+                 user.id if user else "?", bool(user and user.id in settings.allowed_ids))
+
     async def on_stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         log.warning("Ignored message from non-allowlisted user id=%s", user.id if user else "?")
 
     app = Application.builder().token(settings.telegram_token).build()
+    app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
