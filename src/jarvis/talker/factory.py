@@ -1,21 +1,56 @@
-"""Builds the configured Talker. The provider is swappable by configuration only."""
+"""Builds the configured Talker chain. Providers are swappable by configuration only."""
 from __future__ import annotations
 
-from ..config import Settings
+import logging
+
+from ..config import DEFAULT_FALLBACKS, DEFAULT_MODELS, DEFAULT_PRICES, Settings
 from .base import Talker
+from .chain import ChainMember, ChainTalker
+
+log = logging.getLogger(__name__)
 
 
-def build_talker(settings: Settings) -> Talker:
-    if settings.provider == "anthropic":
+def _build_one(provider: str, api_key: str, models: list[str]) -> Talker:
+    if provider == "anthropic":
         from .anthropic_provider import AnthropicTalker
 
-        return AnthropicTalker(settings.anthropic_api_key, settings.model)
-    if settings.provider == "gemini":
+        return AnthropicTalker(api_key, models[0])
+    if provider == "gemini":
         from .gemini_provider import GeminiTalker
 
-        return GeminiTalker(settings.gemini_api_key, [settings.model, *settings.fallback_models])
-    if settings.provider == "groq":
+        return GeminiTalker(api_key, models)
+    if provider == "groq":
         from .groq_provider import GroqTalker
 
-        return GroqTalker(settings.groq_api_key, [settings.model, *settings.fallback_models])
-    raise ValueError(f"unknown provider: {settings.provider}")
+        return GroqTalker(api_key, models)
+    raise ValueError(f"unknown provider: {provider}")
+
+
+def build_talker(settings: Settings) -> ChainTalker:
+    """Primary provider first (honouring the configured model, fallback models and
+    price overrides), then each fallback provider with its own defaults. Fallback
+    providers without an API key are skipped with a warning."""
+    members = [
+        ChainMember(
+            settings.provider,
+            _build_one(settings.provider, settings.key_for(settings.provider),
+                       [settings.model, *settings.fallback_models]),
+            settings.price_in,
+            settings.price_out,
+        )
+    ]
+    for provider in settings.fallback_providers:
+        key = settings.key_for(provider)
+        if not key:
+            log.warning("Fallback provider %s skipped: no API key configured", provider)
+            continue
+        price_in, price_out = DEFAULT_PRICES.get(provider, (0.0, 0.0))
+        members.append(
+            ChainMember(
+                provider,
+                _build_one(provider, key, [DEFAULT_MODELS[provider], *DEFAULT_FALLBACKS[provider]]),
+                price_in,
+                price_out,
+            )
+        )
+    return ChainTalker(members)

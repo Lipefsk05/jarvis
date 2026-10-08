@@ -44,6 +44,17 @@ class SettingsTest(unittest.TestCase):
         ok = self.load({"JARVIS_TALKER_PROVIDER": "groq", "GROQ_API_KEY": "k"})
         self.assertFalse(any("GROQ" in p for p in ok.problems()))
 
+    def test_fallback_providers_parsing_and_validation(self):
+        self.assertEqual(self.load({}).fallback_providers, ())
+        s = self.load({"JARVIS_TALKER_PROVIDER": "groq", "JARVIS_TALKER_FALLBACK_PROVIDERS": " Gemini , groq, gemini,anthropic "})
+        self.assertEqual(s.fallback_providers, ("gemini", "anthropic"))  # lowercased, deduped, no primary
+        bad = self.load({"JARVIS_TALKER_FALLBACK_PROVIDERS": "gemini,nope"})
+        self.assertTrue(any("nope" in p for p in bad.problems()))
+
+    def test_key_for(self):
+        s = self.load({"GROQ_API_KEY": "g", "GEMINI_API_KEY": "m"})
+        self.assertEqual((s.key_for("groq"), s.key_for("gemini"), s.key_for("anthropic"), s.key_for("x")), ("g", "m", "", ""))
+
     def test_fallback_models_override_and_anthropic_default(self):
         self.assertEqual(self.load({}).fallback_models, ())
         s = self.load({"JARVIS_TALKER_FALLBACK_MODELS": " a , b ,"})

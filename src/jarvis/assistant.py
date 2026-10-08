@@ -34,6 +34,7 @@ class AssistantReply:
     humor_offered: bool = False
     warn_budget: bool = False
     blocked: bool = False
+    provider: str = ""
 
 
 class Assistant:
@@ -83,7 +84,7 @@ class Assistant:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)
 
-        self._budget.add(reply.input_tokens, reply.output_tokens)
+        self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd)
         joked = bool(_JOKE_MARK_RE.search(reply.text))
         clean = _STRAY_CLOSER_RE.sub("", _JOKE_MARK_RE.sub("", reply.text)).strip()
         if not clean:
@@ -98,4 +99,5 @@ class Assistant:
             clean,
             humor_offered=joked,
             warn_budget=self._budget.should_warn(),
+            provider=reply.provider,
         )

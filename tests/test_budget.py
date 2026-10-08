@@ -18,6 +18,13 @@ class BudgetTest(unittest.TestCase):
             self.assertAlmostEqual(cost, 2.5)
             self.assertAlmostEqual(self.make(tmp).spent_today(), 2.5)
 
+    def test_explicit_cost_overrides_default_prices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.make(tmp)
+            self.assertAlmostEqual(b.add(2_000_000, 0, cost_usd=0.0), 0.0)  # free provider answered
+            self.assertAlmostEqual(b.add(1_000_000, 0, cost_usd=0.25), 0.25)
+            self.assertAlmostEqual(b.spent_today(), 0.25)
+
     def test_blocks_at_cap(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = self.make(tmp, cap=0.01)

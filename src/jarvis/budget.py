@@ -57,9 +57,12 @@ class Budget:
     def can_spend(self) -> bool:
         return self.cap_usd is None or self.spent_today() < self.cap_usd
 
-    def add(self, input_tokens: int, output_tokens: int) -> float:
-        """Record one call and return its cost in USD."""
-        cost = input_tokens * self._price_in / 1e6 + output_tokens * self._price_out / 1e6
+    def add(self, input_tokens: int, output_tokens: int, cost_usd: float | None = None) -> float:
+        """Record one call and return its cost in USD (computed from the default prices
+        unless the provider that answered already priced it)."""
+        if cost_usd is None:
+            cost_usd = input_tokens * self._price_in / 1e6 + output_tokens * self._price_out / 1e6
+        cost = cost_usd
         data = self._load()
         data["input"] += input_tokens
         data["output"] += output_tokens

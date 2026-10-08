@@ -57,6 +57,16 @@ def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
+def _parse_providers(value: str | None, primary: str) -> tuple[str, ...]:
+    """Comma list of fallback providers; lowercased, de-duplicated, never the primary."""
+    seen: list[str] = []
+    for part in (value or "").split(","):
+        name = part.strip().lower()
+        if name and name != primary and name not in seen:
+            seen.append(name)
+    return tuple(seen)
+
+
 def _parse_ids(value: str | None) -> frozenset[int]:
     if not value:
         return frozenset()
@@ -73,6 +83,7 @@ class Settings:
     provider: str
     model: str
     fallback_models: tuple[str, ...]
+    fallback_providers: tuple[str, ...]
     anthropic_api_key: str
     gemini_api_key: str
     groq_api_key: str
@@ -105,6 +116,7 @@ class Settings:
             provider=provider,
             model=(values.get("JARVIS_TALKER_MODEL") or DEFAULT_MODELS.get(provider, "")).strip(),
             fallback_models=_parse_models(values.get("JARVIS_TALKER_FALLBACK_MODELS"), provider),
+            fallback_providers=_parse_providers(values.get("JARVIS_TALKER_FALLBACK_PROVIDERS"), provider),
             anthropic_api_key=(values.get("ANTHROPIC_API_KEY") or "").strip(),
             gemini_api_key=(values.get("GEMINI_API_KEY") or "").strip(),
             groq_api_key=(values.get("GROQ_API_KEY") or "").strip(),
@@ -122,6 +134,13 @@ class Settings:
             timezone=(values.get("JARVIS_TIMEZONE") or "America/Sao_Paulo").strip(),
         )
 
+    def key_for(self, provider: str) -> str:
+        return {
+            "anthropic": self.anthropic_api_key,
+            "gemini": self.gemini_api_key,
+            "groq": self.groq_api_key,
+        }.get(provider, "")
+
     def problems(self) -> list[str]:
         """Human-readable list of what is missing before the bot can run."""
         issues: list[str] = []
@@ -137,6 +156,9 @@ class Settings:
             issues.append("GEMINI_API_KEY is empty")
         elif self.provider == "groq" and not self.groq_api_key:
             issues.append("GROQ_API_KEY is empty")
+        unknown = [p for p in self.fallback_providers if p not in DEFAULT_MODELS]
+        if unknown:
+            issues.append(f"JARVIS_TALKER_FALLBACK_PROVIDERS has unknown providers: {unknown}")
         if self.daily_budget_usd is None:
             issues.append("JARVIS_DAILY_BUDGET_USD is empty (a daily cap is required)")
         return issues

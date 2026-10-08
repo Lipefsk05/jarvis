@@ -14,6 +14,8 @@ class Reply:
     text: str
     input_tokens: int
     output_tokens: int
+    provider: str = ""  # filled by the chain
+    cost_usd: float | None = None  # filled by the chain, using that provider's prices
 
 
 class Talker(Protocol):

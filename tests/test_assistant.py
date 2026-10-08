@@ -46,6 +46,14 @@ class AssistantTest(unittest.TestCase):
             self.assertIn("humor=SIM", system)
             self.assertEqual(messages, [{"role": "user", "content": "oi"}])
 
+    def test_provider_and_explicit_cost_come_from_the_reply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker([Reply("oi, senhor", 5_000_000, 0, provider="groq", cost_usd=0.0)])
+            a, budget = self.make(tmp, talker)
+            r = a.respond(1, "oi")
+            self.assertEqual(r.provider, "groq")
+            self.assertEqual(budget.spent_today(), 0.0)  # default price would have said US$ 5
+
     def test_joke_mark_is_stripped_and_flags_the_reply(self):
         with tempfile.TemporaryDirectory() as tmp:
             talker = FakeTalker([Reply("Pontualidade rara, senhor. [[humor]]", 10, 5)])
