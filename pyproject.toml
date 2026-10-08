@@ -7,6 +7,7 @@ dependencies = [
     "python-telegram-bot",
     "anthropic",
     "google-genai",
+    "groq>=1.7.0",
 ]
 
 [build-system]

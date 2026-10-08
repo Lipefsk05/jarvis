@@ -11,17 +11,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-5-5",
     "gemini": "gemini-2.5-flash",
+    "groq": "llama-3.3-70b-versatile",
 }
 # Tried in order when the main model is overloaded or unavailable.
 DEFAULT_FALLBACKS = {
     "anthropic": (),
     "gemini": ("gemini-3.5-flash",),
+    "groq": ("llama-3.1-8b-instant",),
 }
 # Reference prices in USD per million tokens (input, output). Haiku 4.5 is the
 # most recent price confirmed; override with the JARVIS_PRICE_* variables.
 DEFAULT_PRICES = {
     "anthropic": (1.0, 5.0),
     "gemini": (0.0, 0.0),  # free tier
+    "groq": (0.0, 0.0),  # free tier
 }
 
 
@@ -72,6 +75,7 @@ class Settings:
     fallback_models: tuple[str, ...]
     anthropic_api_key: str
     gemini_api_key: str
+    groq_api_key: str
     telegram_token: str
     allowed_ids: frozenset[int]
     daily_budget_usd: float | None
@@ -103,6 +107,7 @@ class Settings:
             fallback_models=_parse_models(values.get("JARVIS_TALKER_FALLBACK_MODELS"), provider),
             anthropic_api_key=(values.get("ANTHROPIC_API_KEY") or "").strip(),
             gemini_api_key=(values.get("GEMINI_API_KEY") or "").strip(),
+            groq_api_key=(values.get("GROQ_API_KEY") or "").strip(),
             telegram_token=(values.get("TELEGRAM_BOT_TOKEN") or "").strip(),
             allowed_ids=_parse_ids(values.get("TELEGRAM_ALLOWED_USER_IDS")),
             daily_budget_usd=_opt_float(values.get("JARVIS_DAILY_BUDGET_USD")),
@@ -130,6 +135,8 @@ class Settings:
             issues.append("ANTHROPIC_API_KEY is empty")
         elif self.provider == "gemini" and not self.gemini_api_key:
             issues.append("GEMINI_API_KEY is empty")
+        elif self.provider == "groq" and not self.groq_api_key:
+            issues.append("GROQ_API_KEY is empty")
         if self.daily_budget_usd is None:
             issues.append("JARVIS_DAILY_BUDGET_USD is empty (a daily cap is required)")
         return issues

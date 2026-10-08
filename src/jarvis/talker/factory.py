@@ -14,4 +14,8 @@ def build_talker(settings: Settings) -> Talker:
         from .gemini_provider import GeminiTalker
 
         return GeminiTalker(settings.gemini_api_key, [settings.model, *settings.fallback_models])
+    if settings.provider == "groq":
+        from .groq_provider import GroqTalker
+
+        return GroqTalker(settings.groq_api_key, [settings.model, *settings.fallback_models])
     raise ValueError(f"unknown provider: {settings.provider}")
