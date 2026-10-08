@@ -24,7 +24,7 @@ GREETING_HINTS = (
     "Cumprimente e faça uma observação elegante sobre o horário ou o dia da semana, depois coloque-se à disposição.",
     "Cumprimente apenas, com uma frase curta de prontidão.",
     "Cumprimente e pergunte se há algo por onde o senhor queira começar.",
-    "Cumprimente e pergunte, com um toque de ironia seca, em que o senhor pretende me ocupar.",
+    "Cumprimente e pergunte, com um toque de ironia seca, o que o senhor tem planejado para hoje.",
 )
 THANKS_HINTS = (
     "Responda ao agradecimento com uma frase curta e formal.",
@@ -33,8 +33,9 @@ THANKS_HINTS = (
 )
 # The phrase the model falls back to; banned whenever a hint is active.
 BANNED = (
-    'Regra rígida desta resposta: é PROIBIDO escrever "ser útil", "posso ajudar" e "auxiliá-lo"; '
-    "invente outra formulação, com palavras que você ainda não usou."
+    'Evite a fórmula "em que posso ser útil" e variações como "posso ajudar". Use uma frase natural, curta '
+    "e direta, no tom do J.A.R.V.I.S. dos filmes: nada de construções rebuscadas ou arcaicas "
+    '(como "servir-lhe", "ocupar-me", "dispor-se").'
 )
 
 

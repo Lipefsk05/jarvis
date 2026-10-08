@@ -33,12 +33,12 @@ class StyleHintsTest(unittest.TestCase):
 
     def test_uses_the_whole_pool_over_time(self):
         hints = StyleHints(random.Random(2))
-        seen = {hints.hint_for(1, "oi").split(" Regra rígida")[0] for _ in range(80)}
+        seen = {hints.hint_for(1, "oi").split(" Evite a fórmula")[0] for _ in range(80)}
         self.assertEqual(seen, set(GREETING_HINTS))
 
     def test_thanks_pool_and_neutral_messages(self):
         hints = StyleHints(random.Random(3))
-        self.assertIn(hints.hint_for(1, "valeu").split(" Regra rígida")[0], THANKS_HINTS)
+        self.assertIn(hints.hint_for(1, "valeu").split(" Evite a fórmula")[0], THANKS_HINTS)
         self.assertEqual(hints.hint_for(1, "me explica o que é um container"), "")
 
     def test_chats_have_independent_memory(self):
@@ -46,8 +46,14 @@ class StyleHintsTest(unittest.TestCase):
         first = a.hint_for(1, "oi")
         self.assertEqual(first, b.hint_for(2, "oi"))  # same seed, different chat id: same first draw
 
-    def test_hint_bans_the_fallback_phrase(self):
-        self.assertIn("ser útil", StyleHints().hint_for(1, "oi"))
+    def test_hint_discourages_the_fallback_phrase_and_stiff_wording(self):
+        hint = StyleHints().hint_for(1, "oi")
+        self.assertIn("ser útil", hint)
+        self.assertIn("arcaicas", hint)
+
+    def test_no_hint_asks_for_stiff_wording(self):
+        for text in GREETING_HINTS + THANKS_HINTS:
+            self.assertNotIn("ocupar", text)
 
 
 if __name__ == "__main__":
