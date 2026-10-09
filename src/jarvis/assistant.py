@@ -15,7 +15,8 @@ from .conversation import History
 from .humor import HumorGate
 from .mind import tasks_context
 from .persona import render
-from .style import StyleHints
+from .style import StyleHints, is_greeting, starts_with_greeting
+from .tone import polish
 from .talker.base import Talker, TalkerError
 
 log = logging.getLogger(__name__)
@@ -144,13 +145,14 @@ class Assistant:
             return AssistantReply(BLOCKED_MESSAGE, blocked=True)
 
         permitted = self._gate.permitted(chat_id, text)
+        hint = self._hints.hint_for(chat_id, text)
         system = render(
             self._template,
             humor_allowed=permitted,
             now=self._clock(),
             estado_atual=self._estado_atual(),
             tarefas=self._tasks(text),
-            dica=self._hints.hint_for(chat_id, text),
+            dica=hint,
         )
         self._history.add(chat_id, "user", text)
         try:
@@ -171,6 +173,11 @@ class Assistant:
         if action is not None:  # the system answers; any text the model also wrote is dropped
             return AssistantReply("", provider=reply.provider, action=action)
         clean, joked = split_joke(reply.text)
+        if clean:
+            clean = polish(
+                text, clean, self._clock(), is_greeting=is_greeting(text),
+                greeting_request=starts_with_greeting(text), allows_help=self._hints.allows_help(hint),
+            )
         if not clean:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)

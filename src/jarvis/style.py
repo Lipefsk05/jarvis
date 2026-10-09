@@ -91,6 +91,11 @@ class StyleHints:
         self._last[(chat_id, kind)] = pick
         return pick
 
+    @staticmethod
+    def allows_help(hint: str) -> bool:
+        """Whether a hint made by hint_for welcomed an offer of help."""
+        return any(h in hint for h in HELP_HINTS)
+
     def hint_for(self, chat_id: int, text: str) -> str:
         """A style hint for every message: variety for greetings and thanks, and an explicit
         "this is not a greeting" for the rest."""

@@ -16,6 +16,8 @@ _NOTE = re.compile(
     r"(?:(?:pode|poderia|consegue|voce pode|você pode|vc pode)\s+)*"
     r"(?:registra|registre|registrar|guarda|guarde|guardar|salva|salve|salvar)\s+(?:isso|ai|aí|pra mim|para mim)"
     r"(?:\s+(?:ai|aí|pra mim|para mim))?"
+    r"|"
+    r"(?:n[aã]o|nunca)\s+esquec(?:e|a|er)\s+(?:de\s+)?que\b"  # "não esquece que o carro está na oficina": a note, not an alert
     r")[\s:,\-]*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )

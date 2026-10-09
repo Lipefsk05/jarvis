@@ -57,22 +57,22 @@ class AssistantTest(unittest.TestCase):
 
     def test_joke_tag_is_unwrapped_and_flags_the_reply(self):
         with tempfile.TemporaryDirectory() as tmp:
-            talker = FakeTalker([Reply("Bom dia, senhor. [[humor: Pontualidade rara, para variar.]]", 10, 5)])
+            talker = FakeTalker([Reply("Boa tarde, senhor. [[humor: Pontualidade rara, para variar.]]", 10, 5)])
             a, _ = self.make(tmp, talker)
             r = a.respond(1, "oi")
-            self.assertEqual(r.text, "Bom dia, senhor. Pontualidade rara, para variar.")
+            self.assertEqual(r.text, "Boa tarde, senhor. Pontualidade rara, para variar.")
             self.assertTrue(r.humor_offered)
             a.respond(1, "e aí")
             history = talker.calls[1][1]
-            self.assertEqual(history[1], {"role": "assistant", "content": "Bom dia, senhor. Pontualidade rara, para variar."})
+            self.assertEqual(history[1], {"role": "assistant", "content": "Boa tarde, senhor. Pontualidade rara, para variar."})
 
     def test_bare_humor_tag_is_not_a_joke(self):
         # Seen live with gpt-oss-120b: "[[humor]]" appended to plain greetings and explanations.
         with tempfile.TemporaryDirectory() as tmp:
-            talker = FakeTalker([Reply("Bom dia, senhor. [[humor]]", 10, 5), Reply("ok", 10, 5)])
+            talker = FakeTalker([Reply("Boa tarde, senhor. [[humor]]", 10, 5), Reply("ok", 10, 5)])
             a, _ = self.make(tmp, talker)
             r = a.respond(1, "oi")
-            self.assertEqual(r.text, "Bom dia, senhor.")
+            self.assertEqual(r.text, "Boa tarde, senhor.")
             self.assertFalse(r.humor_offered)
             a.respond(1, "e aí")
             self.assertIn("humor=SIM", talker.calls[1][0])  # the slot was not consumed
@@ -240,7 +240,7 @@ class ReminderGuardTest(unittest.TestCase):
 
     def test_a_yes_without_any_offer_does_not_create_one(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = self.make(tmp, FakeTalker([Reply("Bom dia, senhor.", 10, 5), self.call()]))
+            a = self.make(tmp, FakeTalker([Reply("Boa tarde, senhor.", 10, 5), self.call()]))
             a.respond(1, "bom dia")
             self.assertIsNone(a.respond(1, "sim, pode").action)
 
@@ -249,7 +249,7 @@ class ReminderGuardAfterConfirmationsTest(ReminderGuardTest):
     """History drops a leading assistant message, so each case starts from a conversation in progress."""
 
     def started(self, tmp, then_assistant_said):
-        a = self.make(tmp, FakeTalker([Reply("Bom dia, senhor.", 10, 5), self.call()]))
+        a = self.make(tmp, FakeTalker([Reply("Boa tarde, senhor.", 10, 5), self.call()]))
         a.respond(1, "bom dia")
         a.remember(1, then_assistant_said)
         return a
