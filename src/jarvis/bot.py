@@ -240,7 +240,14 @@ def build_application(settings: Settings) -> Application:
         await start_heartbeat(application)
         await start_scheduler(application)
 
-    app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
+    async def post_shutdown(application: Application) -> None:
+        for name in ("heartbeat", "scheduler"):
+            task = application.bot_data.get(name)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    app = Application.builder().token(settings.telegram_token).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
