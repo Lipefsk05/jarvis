@@ -26,6 +26,7 @@ from .commands import asks_capabilities, parse_note_request, task_query_words, w
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
+from . import heartbeat
 from .humor import HumorGate
 from .inbox import write_note
 from .mind import load_pending, resolve_query, select
@@ -194,6 +195,13 @@ def build_application(settings: Settings) -> Application:
 
     async def on_any(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
+        outage = context.application.bot_data.get("outage")
+        message = update.effective_message
+        if outage and message and user and user.id in settings.allowed_ids and message.date < outage.end:
+            context.application.bot_data.pop("outage")  # announce once, only when a message waited for us
+            await message.reply_text(
+                f"Estive fora do ar {outage.describe()}, senhor. A sua mensagem ficou na fila e só chegou agora."
+            )
         kind = "callback" if update.callback_query else ("message" if update.effective_message else "other")
         log.info("Update received: kind=%s user_id=%s allowed=%s", kind,
                  user.id if user else "?", bool(user and user.id in settings.allowed_ids))
@@ -202,13 +210,25 @@ def build_application(settings: Settings) -> Application:
         user = update.effective_user
         log.warning("Ignored message from non-allowlisted user id=%s", user.id if user else "?")
 
+    async def start_heartbeat(application: Application) -> None:
+        beat_path = settings.state_dir / "heartbeat"
+        outage = heartbeat.find_outage(heartbeat.read_last(beat_path), clock())
+        if outage:
+            log.warning("Was down %s", outage.describe())
+            application.bot_data["outage"] = outage
+        application.bot_data["heartbeat"] = asyncio.create_task(heartbeat.run(beat_path, clock))
+
     async def publish_menu(application: Application) -> None:
         try:
             await application.bot.set_my_commands([BotCommand(name, text) for name, text in menu()])
         except Exception as exc:  # the menu is a convenience; the bot works without it
             log.warning("Could not publish the command menu: %s", type(exc).__name__)
 
-    app = Application.builder().token(settings.telegram_token).post_init(publish_menu).build()
+    async def post_init(application: Application) -> None:
+        await publish_menu(application)
+        await start_heartbeat(application)
+
+    app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
