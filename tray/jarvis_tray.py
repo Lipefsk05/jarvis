@@ -11,9 +11,9 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QStandardPaths, QTimer
+from PySide6.QtCore import QLockFile, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
 
 DISTRO = "Ubuntu"
 REPO = "/home/felip/projetos/jarvis"
@@ -85,6 +85,8 @@ class Tray:
         menu.addAction(quit_action)
         self.menu = menu
         self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self.on_click)
+        self.panel = self.build_panel()
         self.tray.show()
 
         self.timer = QTimer()
@@ -95,6 +97,42 @@ class Tray:
             self.wanted = True  # adopt a bot that is already running
         else:
             self.start()
+
+    def build_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setWindowTitle("Jarvis")
+        panel.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        layout = QVBoxLayout(panel)
+        self.panel_status = QLabel("Verificando…")
+        self.panel_status.setStyleSheet("font-size: 14px; font-weight: bold;")
+        layout.addWidget(self.panel_status)
+        row = QHBoxLayout()
+        for label, handler in (("Iniciar", self.start), ("Parar", self.stop), ("Reiniciar", self.restart)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            row.addWidget(button)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        log = QPushButton("Ver log")
+        log.clicked.connect(lambda: os.startfile(LOG_WIN))
+        quit_button = QPushButton("Sair (e parar o bot)")
+        quit_button.clicked.connect(self.quit)
+        row.addWidget(log)
+        row.addWidget(quit_button)
+        layout.addLayout(row)
+        return panel
+
+    def on_click(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):  # left click
+            if self.panel.isVisible():
+                self.panel.hide()
+                return
+            screen = self.app.primaryScreen().availableGeometry()
+            self.panel.adjustSize()
+            self.panel.move(screen.right() - self.panel.width() - 12, screen.bottom() - self.panel.height() - 12)
+            self.panel.show()
+            self.panel.raise_()
+            self.panel.activateWindow()
 
     def is_alive(self) -> bool:
         try:
@@ -114,6 +152,7 @@ class Tray:
         self.tray.setIcon(self.icons[state])
         self.tray.setToolTip(text)
         self.status_item.setText(text)
+        self.panel_status.setText(text)
 
     def check(self) -> None:
         self.alive = self.is_alive()
@@ -169,7 +208,9 @@ def main() -> int:
         return 0  # already running
     if not QSystemTrayIcon.isSystemTrayAvailable():
         return 1
-    tray = Tray(app)  # noqa: F841 - keep a reference alive
+    tray = Tray(app)
+    if "--show" in sys.argv:
+        tray.on_click(QSystemTrayIcon.Trigger)
     return app.exec()
 
 
