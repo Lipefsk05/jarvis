@@ -31,20 +31,23 @@ class Reminder:
     status: str
     created: datetime
     closed: datetime | None = None
+    event: datetime | None = None  # when the thing happens, if `due` is an advance warning before it
 
     def to_json(self) -> dict:
         return {
             "id": self.id, "text": self.text, "due": self.due.isoformat(), "status": self.status,
             "created": self.created.isoformat(), "closed": self.closed.isoformat() if self.closed else None,
+            "event": self.event.isoformat() if self.event else None,
         }
 
     @staticmethod
     def from_json(raw: dict) -> "Reminder":
-        closed = raw.get("closed")
+        closed, event = raw.get("closed"), raw.get("event")
         return Reminder(
             id=int(raw["id"]), text=str(raw["text"]), due=datetime.fromisoformat(raw["due"]),
             status=str(raw["status"]), created=datetime.fromisoformat(raw["created"]),
             closed=datetime.fromisoformat(closed) if closed else None,
+            event=datetime.fromisoformat(event) if event else None,
         )
 
 
@@ -98,9 +101,12 @@ class ReminderStore:
         except OSError:
             log.warning("Could not save reminders to %s", self._path)
 
-    def add(self, text: str, due: datetime, now: datetime) -> Reminder:
-        """Store a reminder. Asking for the same text at the same time again returns the existing one."""
+    def add(self, text: str, due: datetime, now: datetime, event: datetime | None = None) -> Reminder:
+        """Store a reminder. Asking for the same text at the same time again returns the existing one.
+        `event` is set when `due` is an advance warning ("10 minutes before")."""
         _aware(due, "due"), _aware(now, "now")
+        if event is not None:
+            _aware(event, "event")
         text = clean_text(text)
         if not text:
             raise ReminderError("O que devo lembrar, senhor?")
@@ -111,7 +117,7 @@ class ReminderStore:
                 return item
         if len(self.pending()) >= MAX_PENDING:
             raise ReminderError("Há lembretes demais pendentes, senhor. Cancele alguns antes de criar outro.")
-        reminder = Reminder(self._next_id, text, due, PENDING, now)
+        reminder = Reminder(self._next_id, text, due, PENDING, now, event=event)
         self._next_id += 1
         self._items[reminder.id] = reminder
         self._save(now)

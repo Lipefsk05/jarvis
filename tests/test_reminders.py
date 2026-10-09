@@ -132,3 +132,17 @@ class StoreTest(unittest.TestCase):
     def test_file_is_private(self):
         self.store.add("segredo", later(hours=1), NOW)
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+
+
+class EventFieldTest(unittest.TestCase):
+    def test_event_round_trips_and_old_files_without_it_still_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lembretes.json"
+            store = ReminderStore(path)
+            store.add("pg jovem", later(hours=8), NOW, event=later(hours=8, minutes=10))
+            self.assertEqual(ReminderStore(path).pending()[0].event, later(hours=8, minutes=10))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            for item in raw["items"]:
+                del item["event"]  # a file written before the field existed
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            self.assertIsNone(ReminderStore(path).pending()[0].event)

@@ -157,3 +157,35 @@ class VoiceTest(unittest.TestCase):
             text = voice.on_time([r], T0)
             self.assertNotIn("[[", text)
             self.assertNotIn("kkk", text.lower())
+
+
+class AdvanceWarningTextTest(Base):
+    async def test_advance_warning_says_how_long_is_left_and_the_event_time(self):
+        self.store.add("pg jovem", T0 + timedelta(minutes=50), T0 - timedelta(days=1), event=T0 + timedelta(minutes=60))
+        await self.tick(50)
+        text = self.channel.sent[0]
+        self.assertIn("10 minutos", text)
+        self.assertIn("10:00", text)
+        self.assertIn("pg jovem", text)
+
+
+class ConfirmationAndListingTest(unittest.TestCase):
+    def test_confirmation_and_listing_read_naturally(self):
+        from jarvis.reminder_text import confirmation, human_minutes, listing
+
+        store = ReminderStore(Path(tempfile.mkdtemp()) / "x.json")
+        simple = store.add("pagar o aluguel.", T0 + timedelta(days=1), T0)
+        self.assertEqual(confirmation(simple, T0), "Marcado, senhor (lembrete 1): amanhã às 09:00, pagar o aluguel.")
+        assumed = confirmation(simple, T0, hour_assumed=True)
+        self.assertIn("assumi 09:00", assumed)
+        self.assertIn("/cancela 1", assumed)
+        warned = store.add("pg jovem", T0 + timedelta(hours=9, minutes=50), T0, event=T0 + timedelta(hours=10))
+        text = confirmation(warned, T0)
+        self.assertIn("10 minutos antes de pg jovem", text)
+        self.assertIn("às 19:00", text)
+        self.assertEqual([human_minutes(m) for m in (10, 60, 90, 120)], ["10 minutos", "1 hora", "1 hora e 30 minutos", "2 horas"])
+        self.assertEqual(listing([], T0), "Não há lembretes pendentes, senhor.")
+        shown = listing(store.pending(), T0)
+        self.assertIn("1. amanhã às 09:00 — pagar o aluguel", shown)
+        self.assertIn("evento às 19:00", shown)
+        self.assertIn("/cancela", shown)
