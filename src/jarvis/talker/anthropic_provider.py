@@ -12,7 +12,8 @@ class AnthropicTalker:
         self._model = model
         self._max_tokens = max_tokens
 
-    def reply(self, system: str, messages: list[dict[str, str]]) -> Reply:
+    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
+        # Tools are not wired for this provider yet: it answers in plain text.
         try:
             response = self._client.messages.create(
                 model=self._model,

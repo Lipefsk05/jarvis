@@ -38,7 +38,8 @@ class GeminiTalker:
             model=model, contents=contents, config=self._config(model, system)
         )
 
-    def reply(self, system: str, messages: list[dict[str, str]]) -> Reply:
+    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
+        # Tools are not wired for this provider yet: it answers in plain text.
         types = self._types
         contents = [
             types.Content(

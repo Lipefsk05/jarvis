@@ -35,7 +35,7 @@ class AsksCapabilitiesTest(unittest.TestCase):
     def test_capability_questions(self):
         for text in ("oque voce pode fazer?", "o que você pode fazer", "oq vc pode fazer?", "como você pode me ajudar?",
                      "Em que você pode me ajudar atualmente?", "quais são suas funções?", "quais os seus comandos",
-                     "pra que você serve", "me mostra os comandos", "ajuda", "help", "comandos", "menu",
+                     "pra que você serve", "como eu uso você?", "como usar isso", "me mostra os comandos", "ajuda", "help", "comandos", "menu",
                      "Kkkkkk boa, mas eai oq vc pode fazer?"):
             self.assertTrue(asks_capabilities(text), text)
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .actions import TOOLS, Action, parse_action
 from .budget import Budget
 from .commands import task_query_words, wants_tasks
 from .conversation import History
@@ -58,6 +59,7 @@ class AssistantReply:
     warn_budget: bool = False
     blocked: bool = False
     provider: str = ""
+    action: Action | None = None  # the model asked the system to do something instead of answering
 
 
 class Assistant:
@@ -73,6 +75,7 @@ class Assistant:
         estado_path: Path | None = None,
         mind_dir: Path | None = None,
         hints: StyleHints | None = None,
+        tools: list[dict] | None = None,
     ) -> None:
         self._talker = talker
         self._budget = budget
@@ -83,6 +86,7 @@ class Assistant:
         self._estado_path = estado_path
         self._mind_dir = mind_dir
         self._hints = hints or StyleHints()
+        self._tools = TOOLS if tools is None else tools
 
     def _estado_atual(self) -> str:
         if self._estado_path is None:
@@ -91,6 +95,10 @@ class Assistant:
             return self._estado_path.read_text(encoding="utf-8")
         except OSError:
             return ""
+
+    def remember(self, chat_id: int, text: str) -> None:
+        """Record what the system answered for an action, so later turns know it happened."""
+        self._history.add(chat_id, "assistant", text)
 
     def _tasks(self, text: str) -> str:
         if self._mind_dir is None or not wants_tasks(text):
@@ -115,13 +123,16 @@ class Assistant:
         )
         self._history.add(chat_id, "user", text)
         try:
-            reply = self._talker.reply(system, self._history.messages(chat_id))
+            reply = self._talker.reply(system, self._history.messages(chat_id), self._tools or None)
         except TalkerError as exc:
             log.warning("Talker failed: %s", exc)
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)
 
         self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd)
+        action = parse_action(reply.tool_call)
+        if action is not None:  # the system answers; any text the model also wrote is dropped
+            return AssistantReply("", provider=reply.provider, action=action)
         clean, joked = split_joke(reply.text)
         if not clean:
             self._history.drop_last(chat_id)

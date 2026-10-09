@@ -7,7 +7,7 @@ from jarvis.assistant import BLOCKED_MESSAGE, FAILED_MESSAGE, Assistant, split_j
 from jarvis.budget import Budget
 from jarvis.conversation import History
 from jarvis.humor import HumorGate
-from jarvis.talker.base import Reply, TalkerError
+from jarvis.talker.base import Reply, TalkerError, ToolCall
 
 NOW = datetime(2026, 10, 8, 14, 30)
 TEMPLATE = "SYS humor={{humor_permitido}} estado={{estado_atual}}"
@@ -19,8 +19,9 @@ class FakeTalker:
         self._replies = list(replies or [Reply("ok", 1000, 100)])
         self._error = error
 
-    def reply(self, system, messages):
+    def reply(self, system, messages, tools=None):
         self.calls.append((system, messages))
+        self.tools_seen = tools
         if self._error:
             raise self._error
         return self._replies.pop(0) if len(self._replies) > 1 else self._replies[0]
@@ -131,6 +132,29 @@ class AssistantTest(unittest.TestCase):
             a.respond(1, "me explica o que é DNS")
             self.assertIn("Cumprimente", talker.calls[0][0])
             self.assertIn("não é um cumprimento", talker.calls[1][0])
+
+    def test_a_tool_call_becomes_an_action_and_the_model_text_is_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            call = ToolCall("anotar", {"texto": "  levar o carro na oficina sexta  "})
+            talker = FakeTalker([Reply("Pode deixar, senhor!", 1000, 20, tool_call=call)])
+            a, budget = self.make(tmp, talker)
+            r = a.respond(1, "não esquece que preciso levar o carro na oficina sexta")
+            self.assertEqual((r.text, r.action.name, r.action.texto), ("", "anotar", "levar o carro na oficina sexta"))
+            self.assertGreater(budget.summary().count("1 chamadas"), 0)
+            self.assertIsNotNone(talker.tools_seen)  # the tools were offered to the model
+            a.remember(1, "Anotado, senhor: “levar o carro na oficina sexta”.")
+            a.respond(1, "valeu")
+            roles = [m["role"] for m in talker.calls[1][1]]
+            self.assertEqual(roles, ["user", "assistant", "user"])  # no model text was stored for the action turn
+
+    def test_unknown_or_malformed_tool_calls_are_ignored(self):
+        for call in (ToolCall("apagar_tudo", {}), ToolCall("anotar", {}), ToolCall("anotar", {"texto": 42})):
+            with tempfile.TemporaryDirectory() as tmp:
+                talker = FakeTalker([Reply("Entendido.", 10, 5, tool_call=call)])
+                a, _ = self.make(tmp, talker)
+                r = a.respond(1, "faz algo")
+                self.assertIsNone(r.action, call)
+                self.assertEqual(r.text, "Entendido.")
 
     def test_blocked_when_over_budget_without_calling_model(self):
         with tempfile.TemporaryDirectory() as tmp:

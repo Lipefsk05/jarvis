@@ -13,7 +13,8 @@ class Fake:
         self.outcome = outcome
         self.calls = 0
 
-    def reply(self, system, messages):
+    def reply(self, system, messages, tools=None):
+        self.tools = tools
         self.calls += 1
         if isinstance(self.outcome, Exception):
             raise self.outcome
@@ -55,6 +56,12 @@ class ChainTest(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("groq:RateLimitError:429", message)
         self.assertIn("gemini:ServerError:503", message)
+
+    def test_tools_are_passed_to_every_member_tried(self):
+        a, b = Fake(TalkerError("RateLimitError:429")), Fake(Reply("ok", 1, 1))
+        chain = ChainTalker([ChainMember("groq", a, 0, 0), ChainMember("gemini", b, 0, 0)])
+        chain.reply("sys", MSGS, [{"type": "function"}])
+        self.assertEqual((a.tools, b.tools), ([{"type": "function"}], [{"type": "function"}]))
 
     def test_names(self):
         chain = ChainTalker([ChainMember("a", Fake(None), 0, 0), ChainMember("b", Fake(None), 0, 0)])

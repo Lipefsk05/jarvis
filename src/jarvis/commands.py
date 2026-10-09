@@ -53,6 +53,7 @@ _CAPABILITIES = re.compile(
     r"(?:como|em que) (?:voce|vc|tu) (?:pode|consegue) (?:me )?ajudar|"
     r"(?:quais|qual) (?:sao )?(?:as |os )?(?:suas |seus )?(?:funcoes|funcionalidades|comandos|recursos|habilidades)|"
     r"(?:pra|para) que (?:voce|vc|tu) serve|"
+    r"como (?:eu )?(?:uso|usa|usar) (?:voce|vc|isso|o bot|esse bot)|"
     r"(?:me )?(?:lista|mostra|mostre) (?:os |seus |todos os )?comandos"
     r")\b"
 )

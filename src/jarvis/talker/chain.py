@@ -26,11 +26,11 @@ class ChainTalker:
     def names(self) -> list[str]:
         return [m.name for m in self._members]
 
-    def reply(self, system: str, messages: list[dict[str, str]]) -> Reply:
+    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
         errors: list[str] = []
         for index, member in enumerate(self._members):
             try:
-                reply = member.talker.reply(system, messages)
+                reply = member.talker.reply(system, messages, tools)
             except TalkerError as exc:  # also on bad keys: another provider may still work
                 errors.append(f"{member.name}:{exc}")
                 log.warning("Provider %s failed: %s", member.name, exc)

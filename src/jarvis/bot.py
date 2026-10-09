@@ -84,6 +84,27 @@ def build_application(settings: Settings) -> Application:
         path = await asyncio.to_thread(write_note, settings.inbox_dir, text, clock(), "telegram")
         await message.reply_text(f"Anotado, senhor ({path.name}).")
 
+    async def run_action(message, chat_id: int, action) -> None:
+        """Execute what the model asked for. The text sent back is produced here, not by the model."""
+        if action.name == "anotar":
+            path = await asyncio.to_thread(write_note, settings.inbox_dir, action.texto, clock(), "telegram")
+            preview = action.texto if len(action.texto) <= 80 else action.texto[:77] + "…"
+            confirmation = f"Anotado, senhor: “{preview}” ({path.name})."
+            await message.reply_text(confirmation)
+            assistant.remember(chat_id, confirmation)
+        elif action.name == "consultar_tarefas":
+            await reply_tasks(message, task_query_words(action.area, min_len=3))
+            assistant.remember(chat_id, "(Mostrei as pendências" + (f" de {action.area}" if action.area else "") + ".)")
+        elif action.name == "ver_gasto":
+            await message.reply_text(budget.summary())
+            assistant.remember(chat_id, "(Mostrei o uso de hoje.)")
+        elif action.name == "mostrar_ajuda":
+            await send_help(message)
+            assistant.remember(chat_id, "(Mostrei a lista do que sei fazer.)")
+        elif action.name == "limpar_conversa":
+            history.clear(chat_id)
+            await message.reply_text("Conversa limpa, senhor.")
+
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         chat_id = update.effective_chat.id
@@ -99,8 +120,11 @@ def build_application(settings: Settings) -> Application:
             return
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
-        markup = feedback_markup() if reply.humor_offered else None
-        await message.reply_text(reply.text, reply_markup=markup)
+        if reply.action is not None:
+            await run_action(message, chat_id, reply.action)
+        else:
+            markup = feedback_markup() if reply.humor_offered else None
+            await message.reply_text(reply.text, reply_markup=markup)
         if reply.provider and reply.provider != settings.provider:
             await message.reply_text(f"↪ respondido pelo provedor reserva ({reply.provider}).")
         if reply.warn_budget:
