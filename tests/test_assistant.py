@@ -243,3 +243,31 @@ class ReminderGuardTest(unittest.TestCase):
             a = self.make(tmp, FakeTalker([Reply("Bom dia, senhor.", 10, 5), self.call()]))
             a.respond(1, "bom dia")
             self.assertIsNone(a.respond(1, "sim, pode").action)
+
+
+class ReminderGuardAfterConfirmationsTest(ReminderGuardTest):
+    """History drops a leading assistant message, so each case starts from a conversation in progress."""
+
+    def started(self, tmp, then_assistant_said):
+        a = self.make(tmp, FakeTalker([Reply("Bom dia, senhor.", 10, 5), self.call()]))
+        a.respond(1, "bom dia")
+        a.remember(1, then_assistant_said)
+        return a
+
+    def test_a_cancellation_confirmation_is_not_an_offer(self):
+        # Real case (2026-10-09): right after "Lembrete 8 cancelado", a bare remark created a reminder.
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.started(tmp, "Lembrete 8 cancelado, senhor: dentista.")
+            self.assertIsNone(a.respond(1, "tenho dentista amanhã às 14h").action)
+
+    def test_other_confirmations_and_listings_are_not_offers_either(self):
+        for previous in ("Marcado, senhor (lembrete 3): amanhã às 09:00, pagar o aluguel.",
+                         "(Mostrei os lembretes pendentes.)", "Lembretes pendentes, senhor (2): ..."):
+            with tempfile.TemporaryDirectory() as tmp:
+                a = self.started(tmp, previous)
+                self.assertIsNone(a.respond(1, "tenho dentista amanhã às 14h").action, previous)
+
+    def test_a_question_offering_a_reminder_still_lets_a_yes_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.started(tmp, "Deseja que eu crie um lembrete para o dentista, senhor?")
+            self.assertEqual(a.respond(1, "sim").action.name, "criar_lembrete")

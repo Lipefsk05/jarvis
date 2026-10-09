@@ -106,12 +106,16 @@ class Assistant:
         self._history.add(chat_id, "assistant", text)
 
     def _reminder_wanted(self, chat_id: int, text: str) -> bool:
-        """True if this message asks for a reminder, or confirms a reminder the assistant just offered."""
+        """True if this message asks for a reminder, or says yes to a reminder the assistant just offered.
+        An offer is a question about reminders; a confirmation like "Lembrete 8 cancelado" is not one."""
         if has_reminder_intent(text):
             return True
         history = self._history.messages(chat_id)
         previous = history[-2] if len(history) >= 2 else None
-        return bool(previous and previous["role"] == "assistant" and has_reminder_intent(previous["content"]))
+        return bool(
+            previous and previous["role"] == "assistant"
+            and "?" in previous["content"] and has_reminder_intent(previous["content"])
+        )
 
     def _tasks(self, text: str) -> str:
         if self._mind_dir is None or not wants_tasks(text):
