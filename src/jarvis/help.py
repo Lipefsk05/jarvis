@@ -25,6 +25,7 @@ COMMANDS = (
     Command("lembra", "<quando> <o quê>", "Marca um lembrete",
             'marca um lembrete que eu entrego no Telegram na hora certa. Ex.: /lembra amanhã às 9 pagar o aluguel; '
             '"hoje às 19 reunião, 10 min antes" avisa com antecedência; "daqui a 2 horas" também vale. '
+            'Repete com "todo dia às 8 da manhã tomar remédio", "toda segunda às 9 reunião" ou "nos dias úteis às 8 standup". '
             'Sem hora, assumo a padrão e aviso.'),
     Command("lembretes", "", "Lista os lembretes pendentes",
             "lista os lembretes pendentes, com o número de cada um."),

@@ -6,6 +6,7 @@ from __future__ import annotations
 import random
 from datetime import datetime
 
+from .repeat import label
 from .reminders import Reminder
 
 ON_TIME = (
@@ -108,6 +109,8 @@ def confirmation(reminder: Reminder, now: datetime, hour_assumed: bool = False) 
                 f"{falta} antes de {_body(reminder.text)} (às {reminder.event:%H:%M}).")
     else:
         text = f"Marcado, senhor (lembrete {reminder.id}): {describe(reminder.due, now)}, {_body(reminder.text)}."
+    if reminder.repeat:
+        text += f" Repito {label(reminder.repeat, reminder.event or reminder.due)}."
     if hour_assumed:
         text += (f" Não disse a hora, então assumi {reminder.due:%H:%M}; se preferir outra, "
                  f"cancele com /cancela {reminder.id} e marque de novo.")
@@ -122,7 +125,8 @@ def listing(items: list[Reminder], now: datetime) -> str:
     lines = [f"Lembretes pendentes, senhor ({len(items)}):"]
     for r in items:
         extra = f" (aviso; evento às {r.event:%H:%M})" if r.event else ""
-        lines.append(f"{r.id}. {describe(r.due, now)}{extra} — {_body(r.text)}")
+        again = f" (repete {label(r.repeat, r.event or r.due)})" if r.repeat else ""
+        lines.append(f"{r.id}. {describe(r.due, now)}{extra}{again} — {_body(r.text)}")
     lines.append("")
     lines.append("Para cancelar: /cancela <número>.")
     return "\n".join(lines)

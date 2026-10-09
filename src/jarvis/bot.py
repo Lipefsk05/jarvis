@@ -217,7 +217,7 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text(planned.question)
             return
         try:
-            reminder = reminders.add(planned.text, planned.due, now, event=planned.event)
+            reminder = reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat)
         except ReminderError as exc:
             await message.reply_text(str(exc))
             return
@@ -245,7 +245,7 @@ def build_application(settings: Settings) -> Application:
         if cancelled is None:
             await message.reply_text(f"Não encontrei o lembrete {numero} entre os pendentes, senhor.")
             return
-        text = f"Lembrete {cancelled.id} cancelado, senhor: {cancelled.text}."
+        text = f"Lembrete {cancelled.id} cancelado, senhor: {cancelled.text}." + (" Não repito mais." if cancelled.repeat else "")
         await message.reply_text(text)
         assistant.remember(chat_id, text)
 

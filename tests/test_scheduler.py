@@ -189,3 +189,27 @@ class ConfirmationAndListingTest(unittest.TestCase):
         self.assertIn("1. amanhã às 09:00 — pagar o aluguel", shown)
         self.assertIn("evento às 19:00", shown)
         self.assertIn("/cancela", shown)
+
+
+class RepeatingDeliveryTest(Base):
+    async def test_a_daily_reminder_is_delivered_every_day_and_never_closes(self):
+        item = self.store.add("tomar remédio", T0, T0 - timedelta(days=1), repeat="daily")
+        for day in range(3):
+            await run_once(self.store, self.outbox, self.voice, T0 + timedelta(days=day))
+        self.assertEqual(len(self.channel.sent), 3)
+        self.assertEqual((self.store.get(item.id).status, self.store.get(item.id).due), (PENDING, T0 + timedelta(days=3)))
+
+    async def test_two_ticks_in_the_same_minute_do_not_deliver_twice(self):
+        self.store.add("tomar remédio", T0, T0 - timedelta(days=1), repeat="daily")
+        await self.tick(0)
+        await self.tick(0)
+        self.assertEqual(len(self.channel.sent), 1)
+
+    async def test_a_failed_delivery_keeps_the_same_occurrence_for_the_next_tick(self):
+        item = self.store.add("tomar remédio", T0, T0 - timedelta(days=1), repeat="daily")
+        self.channel.fail = True
+        await self.tick(0)
+        self.assertEqual(self.store.get(item.id).due, T0)
+        self.channel.fail = False
+        await self.tick(0)
+        self.assertEqual(len(self.channel.sent), 1)

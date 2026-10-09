@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from .when import MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
 from .reminder_text import human_minutes
+from .repeat import align_first, extract
 
 MAX_LEAD_MINUTES = 24 * 60
 
@@ -34,6 +35,7 @@ class Planned:
     event: datetime | None  # set when `due` is an advance warning
     lead_minutes: int
     hour_assumed: bool
+    repeat: str | None = None  # "daily" | "weekdays" | "weekly"
 
 
 def _norm(token: str) -> str:
@@ -160,8 +162,15 @@ def _only_when(side: str) -> bool:
     return bool(norm) and all(_is_vocab(t) or t in {"antes", "uns", "umas"} for t in norm)
 
 
-def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: int | None = None) -> Planned | Ask:
-    """Plan a reminder whose pieces are already separated (what, when in words, minutes of advance)."""
+def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: int | None = None,
+               repeat: str | None = None) -> Planned | Ask:
+    """Plan a reminder whose pieces are already separated (what, when in words, minutes of advance).
+    A repeat can come in `repeat` or inside `phrase` ("todo dia às 9")."""
+    if repeat is None:
+        found = extract(phrase)
+        if found.ask:
+            return found.ask
+        phrase, repeat = found.rest, found.repeat
     if not text.strip():
         return Ask("texto", "O que devo lembrar, senhor?")
     if lead > MAX_LEAD_MINUTES:
@@ -169,18 +178,22 @@ def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: i
     when = parse(phrase, now, default_hour)
     if isinstance(when, Ask):
         return when
-    due = when.dt - timedelta(minutes=lead)
+    anchor = align_first(when.dt, repeat)
+    due = anchor - timedelta(minutes=lead)
     if due <= now:
         return Ask(
             "passou",
             f"Com {human_minutes(lead)} de antecedência o aviso já teria passado, senhor. Para quando devo marcar?",
         )
-    return Planned(text.strip(), due, when.dt if lead else None, lead, when.hour_assumed)
+    return Planned(text.strip(), due, anchor if lead else None, lead, when.hour_assumed, repeat)
 
 
 def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> Planned | Ask:
     """Plan a reminder from one free sentence (the /lembra command and "me lembra ...")."""
-    text, phrase, lead = split_request(raw)
+    found = extract(raw)
+    if found.ask:
+        return found.ask
+    text, phrase, lead = split_request(found.rest)
     if not phrase:
         return parse("", now)  # the standard "para quando devo marcar?" question
-    return plan_parts(text, phrase, lead, now, default_hour)
+    return plan_parts(text, phrase, lead, now, default_hour, found.repeat)

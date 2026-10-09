@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .repeat import next_occurrence
 from .textutil import fold
 
 log = logging.getLogger(__name__)
@@ -34,12 +35,13 @@ class Reminder:
     created: datetime
     closed: datetime | None = None
     event: datetime | None = None  # when the thing happens, if `due` is an advance warning before it
+    repeat: str | None = None  # "daily" | "weekdays" | "weekly": delivering it schedules the next one
 
     def to_json(self) -> dict:
         return {
             "id": self.id, "text": self.text, "due": self.due.isoformat(), "status": self.status,
             "created": self.created.isoformat(), "closed": self.closed.isoformat() if self.closed else None,
-            "event": self.event.isoformat() if self.event else None,
+            "event": self.event.isoformat() if self.event else None, "repeat": self.repeat,
         }
 
     @staticmethod
@@ -50,6 +52,7 @@ class Reminder:
             status=str(raw["status"]), created=datetime.fromisoformat(raw["created"]),
             closed=datetime.fromisoformat(closed) if closed else None,
             event=datetime.fromisoformat(event) if event else None,
+            repeat=raw.get("repeat") or None,
         )
 
 
@@ -103,9 +106,10 @@ class ReminderStore:
         except OSError:
             log.warning("Could not save reminders to %s", self._path)
 
-    def add(self, text: str, due: datetime, now: datetime, event: datetime | None = None) -> Reminder:
+    def add(self, text: str, due: datetime, now: datetime, event: datetime | None = None,
+            repeat: str | None = None) -> Reminder:
         """Store a reminder. Asking for the same text at the same time again returns the existing one.
-        `event` is set when `due` is an advance warning ("10 minutes before")."""
+        `event` is set when `due` is an advance warning ("10 minutes before"); `repeat` makes it a series."""
         _aware(due, "due"), _aware(now, "now")
         if event is not None:
             _aware(event, "event")
@@ -115,11 +119,11 @@ class ReminderStore:
         if due <= now:
             raise ReminderError("Esse horário já passou, senhor.")
         for item in self.pending():
-            if item.text == text and item.due == due:
+            if item.text == text and item.due == due and item.repeat == repeat:
                 return item
         if len(self.pending()) >= MAX_PENDING:
             raise ReminderError("Há lembretes demais pendentes, senhor. Cancele alguns antes de criar outro.")
-        reminder = Reminder(self._next_id, text, due, PENDING, now, event=event)
+        reminder = Reminder(self._next_id, text, due, PENDING, now, event=event, repeat=repeat)
         self._next_id += 1
         self._items[reminder.id] = reminder
         self._save(now)
@@ -152,13 +156,20 @@ class ReminderStore:
         return item
 
     def close(self, reminder_id: int, status: str, now: datetime) -> Reminder | None:
-        """Mark a pending reminder as sent, sent late, or lost. None if it is not pending."""
+        """Mark a pending reminder as sent, sent late, or lost. None if it is not pending.
+        A repeating one is not closed: it stays pending, moved to its next occurrence."""
         if status not in CLOSING:
             raise ValueError(f"cannot close a reminder as {status!r}")
         item = self._items.get(reminder_id)
         if item is None or item.status != PENDING:
             return None
-        item.status, item.closed = status, now
+        if item.repeat:
+            anchor = item.event or item.due
+            lead = anchor - item.due
+            next_anchor = next_occurrence(anchor, item.repeat, now, lead)
+            item.due, item.event = next_anchor - lead, (next_anchor if item.event else None)
+        else:
+            item.status, item.closed = status, now
         self._save(now)
         return item
 
