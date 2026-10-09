@@ -95,3 +95,30 @@ class NoInventionTest(unittest.TestCase):
         self.assertIn("únicos comandos que existem", template)
         for command in ("/anota", "/tarefas", "/uso", "/esquece"):
             self.assertIn(command, template)
+
+
+class PersistentHistoryTest(unittest.TestCase):
+    def test_survives_a_restart_and_respects_clear_and_drop(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "conversa.json"
+            h = History(4, path)
+            h.add(1, "user", "oi")
+            h.add(1, "assistant", "Boa tarde, senhor.")
+            h.add(1, "user", "e agora?")
+            h.drop_last(1)
+            again = History(4, path)
+            self.assertEqual([m["content"] for m in again.messages(1)], ["oi", "Boa tarde, senhor."])
+            again.clear(1)
+            self.assertEqual(History(4, path).messages(1), [])
+
+    def test_corrupt_file_starts_empty(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "conversa.json"
+            path.write_text("{não é json", encoding="utf-8")
+            self.assertEqual(History(4, path).messages(1), [])
+            path.write_text('{"1": [{"role": "assistant", "content": "x"}, {"role": "user", "content": "y"}]}', encoding="utf-8")
+            self.assertEqual([m["content"] for m in History(4, path).messages(1)], ["y"])

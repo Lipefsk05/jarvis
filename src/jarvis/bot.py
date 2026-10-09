@@ -62,7 +62,7 @@ def build_application(settings: Settings) -> Application:
         clock=clock,
     )
     gate = HumorGate()
-    history = History(settings.history_messages)
+    history = History(settings.history_messages, settings.state_dir / "conversa.json")
     assistant = Assistant(
         talker=build_talker(settings),
         budget=budget,
