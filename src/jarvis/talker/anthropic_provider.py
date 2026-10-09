@@ -1,7 +1,7 @@
 """Talker backed by the Anthropic Messages API."""
 from __future__ import annotations
 
-from .base import Reply, TalkerError, without_tools
+from .base import Reply, TalkerError, ToolCall, to_anthropic_tools
 
 
 class AnthropicTalker:
@@ -13,17 +13,22 @@ class AnthropicTalker:
         self._max_tokens = max_tokens
 
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
-        # Tools are not wired for this provider yet: it answers in plain text, and is told so.
-        system = without_tools(system, tools)
+        extra = {"tools": to_anthropic_tools(tools)} if tools else {}
         try:
             response = self._client.messages.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 system=system,
                 messages=messages,
+                **extra,
             )
         except Exception as exc:  # SDK errors never carry the key; keep only the type
             raise TalkerError(type(exc).__name__) from exc
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                arguments = block.input if isinstance(block.input, dict) else {}
+                return Reply("", response.usage.input_tokens, response.usage.output_tokens,
+                             tool_call=ToolCall(block.name, arguments))
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         ).strip()

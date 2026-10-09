@@ -45,3 +45,11 @@ NO_TOOLS_NOTICE = (
 def without_tools(system: str, tools: list[dict] | None) -> str:
     """For providers that cannot run tools: tell the model so, or it imitates calling them."""
     return system + NO_TOOLS_NOTICE if tools else system
+
+
+def to_anthropic_tools(tools: list[dict] | None) -> list[dict]:
+    """OpenAI-style function specs -> Anthropic tool definitions."""
+    return [
+        {"name": f["name"], "description": f["description"], "input_schema": f["parameters"]}
+        for f in (t["function"] for t in tools or [])
+    ]

@@ -2,6 +2,7 @@ import importlib.util
 import unittest
 from types import SimpleNamespace
 
+from jarvis.actions import TOOLS
 from jarvis.talker.base import TalkerError
 
 HAS_SDK = importlib.util.find_spec("google.genai") is not None
@@ -35,7 +36,7 @@ class GeminiFallbackTest(unittest.TestCase):
         talker._max_tokens = 400
         talker.tried = []
 
-        def fake_generate(model, system, contents):
+        def fake_generate(model, system, contents, tools=None):
             talker.tried.append(model)
             outcome = outcomes[model]
             if isinstance(outcome, Exception):
@@ -87,6 +88,27 @@ class GeminiFallbackTest(unittest.TestCase):
         t = self.make({"a": cut, "b": response("Ainda não consigo, senhor.")})
         self.assertEqual(t.reply("sys", self.MSGS).text, "Ainda não consigo, senhor.")
         self.assertEqual(t.tried, ["a", "b"])
+
+    def test_tool_call_becomes_a_reply_without_text(self):
+        call = SimpleNamespace(name="anotar", args={"texto": "comprar pão"})
+        called = response("")
+        called.function_calls = [call]
+        t = self.make({"a": called})
+        reply = t.reply("sys", self.MSGS, tools=TOOLS)
+        self.assertEqual((reply.text, reply.tool_call.name, reply.tool_call.arguments), ("", "anotar", {"texto": "comprar pão"}))
+
+    def test_every_real_tool_converts_to_a_declaration_and_the_sdk_runs_none_itself(self):
+        t = self.make({})
+        config = t._config("gemini-2.5-flash", "s", TOOLS)
+        declared = [d.name for d in config.tools[0].function_declarations]
+        self.assertEqual(declared, [x["function"]["name"] for x in TOOLS])
+        self.assertTrue(config.automatic_function_calling.disable)
+        by_name = {d.name: d for d in config.tools[0].function_declarations}
+        self.assertIsNone(by_name["ver_gasto"].parameters_json_schema)  # no arguments, no schema
+        self.assertEqual(by_name["criar_lembrete"].parameters_json_schema["properties"]["antecedencia_minutos"]["type"], ["integer", "null"])
+
+    def test_no_tools_means_none_in_the_config(self):
+        self.assertIsNone(self.make({})._config("gemini-2.5-flash", "s").tools)
 
 
 if __name__ == "__main__":
