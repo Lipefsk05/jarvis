@@ -65,3 +65,18 @@ class ReminderRequestTest(unittest.TestCase):
         for text in ("lembra do que eu falei ontem?", "você lembra da senha?", "eu lembro disso", "lembrar é viver",
                      "bom dia", "anota que preciso de pão"):
             self.assertIsNone(parse_reminder_request(text), text)
+
+
+class IsYesTest(unittest.TestCase):
+    def test_short_agreements(self):
+        from jarvis.commands import is_yes
+
+        for text in ("sim", "Sim!", "sim, pode", "pode sim", "Me lembre sim", "me lembra sim por favor", "claro", "isso mesmo", "ok", "bora", "Jarvis, sim"):
+            self.assertTrue(is_yes(text), text)
+
+    def test_new_requests_and_denials_are_not_yes(self):
+        from jarvis.commands import is_yes
+
+        for text in ("", "não", "sim mas amanhã às 9", "me lembra de pagar a luz", "pode anotar que preciso de pão",
+                     "sim, e quanto gastei hoje?", "nao quero", "me lembra amanhã", "claro que não"):
+            self.assertFalse(is_yes(text), text)

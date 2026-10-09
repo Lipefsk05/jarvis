@@ -59,6 +59,19 @@ def has_reminder_intent(text: str) -> bool:
     return bool(_REMINDER_INTENT.search(fold(text)))
 
 
+_YES_WORDS = {
+    "sim", "pode", "claro", "isso", "mesmo", "quero", "faz", "ok", "beleza", "blz", "bora", "manda", "ver", "pf", "pfv",
+    "por", "favor", "me", "lembra", "lembre", "avisa", "avise", "jarvis", "senhor", "uhum", "aham", "positivo",
+}
+_YES_CORE = _YES_WORDS - {"me", "por", "favor", "jarvis", "senhor", "mesmo", "ver"}
+
+
+def is_yes(text: str) -> bool:
+    """A short agreement ("sim", "pode sim", "me lembre sim"), not a new request that merely contains one."""
+    words = re.findall(r"[a-z]+", fold(text))
+    return 0 < len(words) <= 6 and all(w in _YES_WORDS for w in words) and any(w in _YES_CORE for w in words)
+
+
 _TASKS_REQUEST = re.compile(
     r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|o que (?:ainda )?(?:falta|resta)|o que tem (?:pra|para|que) fazer|pendentes?)\b"
 )

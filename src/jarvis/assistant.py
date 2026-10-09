@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
 from .actions import TOOLS, Action, parse_action
 from .budget import Budget
-from .commands import has_reminder_intent, task_query_words, wants_tasks
+from .commands import has_reminder_intent, is_yes, task_query_words, wants_tasks
 from .conversation import History
 from .humor import HumorGate
 from .mind import tasks_context
@@ -20,6 +20,7 @@ from .talker.base import Talker, TalkerError
 
 log = logging.getLogger(__name__)
 
+OFFER_TTL = timedelta(minutes=10)  # how long a "want me to remind you?" stays open
 BLOCKED_MESSAGE = (
     "Atingi o teto de gasto de hoje, senhor. Volto a conversar amanhã, "
     "ou assim que o senhor liberar o limite."
@@ -87,6 +88,19 @@ class Assistant:
         self._mind_dir = mind_dir
         self._hints = hints or StyleHints()
         self._tools = TOOLS if tools is None else tools
+        self._offers: dict[int, tuple[datetime, Action]] = {}  # reminder proposals waiting for a "yes"
+
+    def confirm_offer(self, chat_id: int, text: str) -> Action | None:
+        """If a reminder was proposed and this message is a plain yes, return the proposed action.
+        Any other message closes the offer. The code keeps the offer, so a yes needs no model."""
+        offer = self._offers.pop(chat_id, None)
+        if offer is None:
+            return None
+        made, action = offer
+        if self._clock() - made > OFFER_TTL or not is_yes(text):
+            return None
+        self._history.add(chat_id, "user", text)
+        return action
 
     def _estado_atual(self) -> str:
         if self._estado_path is None:
@@ -150,7 +164,8 @@ class Assistant:
         action = parse_action(reply.tool_call)
         if action is not None and action.name == "criar_lembrete" and not self._reminder_wanted(chat_id, text):
             # The model decided on its own; the user only mentioned something. Ask instead of creating it.
-            question = f'Quer que eu o avise disso, senhor? Diga "me lembra {action.quando}" e eu marco.'
+            question = f'Quer que eu o avise disso, senhor? Diga "sim" e eu marco para {action.quando}.'
+            self._offers[chat_id] = (self._clock(), action)
             self._history.add(chat_id, "assistant", question)
             return AssistantReply(question, provider=reply.provider)
         if action is not None:  # the system answers; any text the model also wrote is dropped

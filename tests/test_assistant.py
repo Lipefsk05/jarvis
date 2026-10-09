@@ -271,3 +271,47 @@ class ReminderGuardAfterConfirmationsTest(ReminderGuardTest):
         with tempfile.TemporaryDirectory() as tmp:
             a = self.started(tmp, "Deseja que eu crie um lembrete para o dentista, senhor?")
             self.assertEqual(a.respond(1, "sim").action.name, "criar_lembrete")
+
+
+class OfferConfirmationTest(ReminderGuardTest):
+    def blocked(self, tmp, extra=None):
+        talker = FakeTalker([self.call(), *(extra or [])])
+        a = self.make(tmp, talker)
+        a.respond(1, "tenho dentista amanhã às 14h")  # blocked: becomes an offer
+        return a, talker
+
+    def test_a_plain_yes_creates_exactly_what_was_offered_without_the_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for yes in ("sim", "sim, pode", "Me lembre sim", "pode sim", "claro", "isso mesmo", "me lembra sim por favor"):
+                a, talker = self.blocked(tmp)
+                action = a.confirm_offer(1, yes)
+                self.assertEqual((action.name, action.texto, action.quando), ("criar_lembrete", "dentista", "amanhã às 14h"), yes)
+                self.assertEqual(len(talker.calls), 1, yes)  # the model was not asked again
+
+    def test_an_offer_can_only_be_accepted_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, _ = self.blocked(tmp)
+            self.assertIsNotNone(a.confirm_offer(1, "sim"))
+            self.assertIsNone(a.confirm_offer(1, "sim"))
+
+    def test_anything_else_closes_the_offer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for other in ("não", "deixa pra lá", "me lembra amanhã às 9 de pagar a luz", "e o clima hoje?"):
+                a, _ = self.blocked(tmp)
+                self.assertIsNone(a.confirm_offer(1, other), other)
+                self.assertIsNone(a.confirm_offer(1, "sim"), other)  # and a later yes finds nothing
+
+    def test_an_old_offer_expires(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from datetime import timedelta as td
+            now = [NOW]
+            budget = Budget(Path(tmp) / "usage.json", 10.0, 1.0, 5.0, clock=lambda: NOW)
+            a = Assistant(talker=FakeTalker([self.call()]), budget=budget, gate=HumorGate(min_gap=2),
+                          history=History(), template=TEMPLATE, clock=lambda: now[0])
+            a.respond(1, "tenho dentista amanhã às 14h")
+            now[0] = NOW + td(minutes=11)
+            self.assertIsNone(a.confirm_offer(1, "sim"))
+
+    def test_a_yes_with_no_offer_does_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(self.make(tmp, FakeTalker()).confirm_offer(1, "sim"))

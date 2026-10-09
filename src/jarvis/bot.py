@@ -125,6 +125,10 @@ def build_application(settings: Settings) -> Application:
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         chat_id = update.effective_chat.id
+        confirmed = assistant.confirm_offer(chat_id, message.text)
+        if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
+            await run_action(message, chat_id, confirmed)
+            return
         note = parse_note_request(message.text)
         if note is not None:  # handled by code: no model call, nothing to invent
             await save_note(message, note)
