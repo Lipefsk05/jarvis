@@ -42,9 +42,10 @@ NATURAL_LANGUAGE = (
     'Pergunte "quais tarefas eu tenho?", "tarefas do dindin" ou "o que falta no domo" e eu respondo como no /tarefas (só leitura).',
     'Escreva "anota que ...", "pode anotar ..." ou "guarda isso: ..." e eu guardo a nota no inbox do Mind.',
     'Escreva "me lembra de ... amanhã às 9" e eu marco o lembrete, no mesmo formato do /lembra.',
+    "Mande um áudio (até 5 minutos) e eu transcrevo, mostro o que entendi e respondo em texto, como se você tivesse digitado.",
     "Converso e tiro dúvidas no que eu sei.",
 )
-NOT_YET = "e-mail, agenda, áudio e controlar o computador"
+NOT_YET = "e-mail, agenda, responder em áudio e controlar o computador"
 
 
 def menu() -> list[tuple[str, str]]:

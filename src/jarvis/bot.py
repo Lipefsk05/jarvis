@@ -21,6 +21,7 @@ from telegram.ext import (
 )
 
 from .assistant import Assistant
+from .audio import GroqTranscriber, TranscribeError, check_audio, transcript_line
 from .budget import Budget
 from .commands import asks_capabilities, parse_note_request, parse_reminder_request, task_query_words, wants_tasks
 from .help import format_help, menu
@@ -43,6 +44,7 @@ from .talker.factory import build_talker
 log = logging.getLogger("jarvis")
 
 GREETING = "À disposição, senhor. Eu converso, anoto no seu Mind e consulto as tarefas pendentes. Use /ajuda para ver tudo o que sei fazer."
+UNSUPPORTED_MEDIA = "Por ora só entendo texto e áudio, senhor. Fotos, arquivos e figurinhas eu ainda não sei tratar."
 UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /ajuda para ver o que sei fazer."
 TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
@@ -82,6 +84,7 @@ def build_application(settings: Settings) -> Application:
         estado_path=settings.state_dir / "estado_atual.md",
         mind_dir=settings.mind_dir,
     )
+    transcriber = GroqTranscriber(settings.groq_api_key) if settings.groq_api_key else None
     allowed = filters.User(user_id=list(settings.allowed_ids))
 
     async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -138,28 +141,30 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text("Conversa limpa, senhor.")
 
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        message = update.effective_message
-        chat_id = update.effective_chat.id
-        confirmed = assistant.confirm_offer(chat_id, message.text)
+        await handle_text(update.effective_message, update.effective_chat.id, update.effective_message.text, context)
+
+    async def handle_text(message, chat_id: int, text: str, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """One user turn, typed or transcribed from audio: shortcuts handled by code first, then the model."""
+        confirmed = assistant.confirm_offer(chat_id, text)
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
-        note = parse_note_request(message.text)
+        note = parse_note_request(text)
         if note is not None:  # handled by code: no model call, nothing to invent
             await save_note(message, note)
             return
-        remind = parse_reminder_request(message.text)
+        remind = parse_reminder_request(text)
         if remind is not None:  # "me lembra de ..." is handled by code too: validated date, no invention
             await create_reminder(message, chat_id, remind)
             return
-        if asks_capabilities(message.text):  # the list comes from code, so it is always complete and right
+        if asks_capabilities(text):  # the list comes from code, so it is always complete and right
             await send_help(message)
             return
-        if wants_tasks(message.text):  # same readable answer as /tarefas, no model call
-            await reply_tasks(message, task_query_words(message.text))
+        if wants_tasks(text):  # same readable answer as /tarefas, no model call
+            await reply_tasks(message, task_query_words(text))
             return
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-        reply = await asyncio.to_thread(assistant.respond, chat_id, message.text)
+        reply = await asyncio.to_thread(assistant.respond, chat_id, text)
         if reply.action is not None:
             await run_action(message, chat_id, reply.action)
         else:
@@ -169,6 +174,36 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text(f"↪ respondido pelo provedor reserva ({reply.provider}).")
         if reply.warn_budget:
             await message.reply_text("Aviso, senhor: já usei 80% do teto de gasto de hoje.")
+
+    async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Voice note or audio file: transcribe, show what was understood, then treat it like typed text."""
+        message = update.effective_message
+        chat_id = update.effective_chat.id
+        media = message.voice or message.audio
+        if transcriber is None:
+            await message.reply_text("Não consigo transcrever áudio, senhor: falta a chave do Groq.")
+            return
+        refusal = check_audio(media.duration, media.file_size)
+        if refusal:
+            await message.reply_text(refusal)
+            return
+        await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        try:
+            file = await context.bot.get_file(media.file_id)
+            data = bytes(await file.download_as_bytearray())
+            text = await asyncio.to_thread(transcriber.transcribe, getattr(media, "file_name", None) or "voz.ogg", data)
+        except TranscribeError as exc:
+            await message.reply_text(exc.reason)
+            return
+        except Exception as exc:  # download failed: say so instead of staying silent
+            log.warning("Audio download failed: %s", type(exc).__name__)
+            await message.reply_text("Não consegui baixar o áudio, senhor.")
+            return
+        await message.reply_text(transcript_line(text))
+        await handle_text(message, chat_id, text, context)
+
+    async def on_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(UNSUPPORTED_MEDIA)
 
     REMIND_USAGE = (
         "Diga quando e o quê, senhor. Ex.: /lembra amanhã às 9 pagar o aluguel, "
@@ -356,6 +391,12 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.COMMAND, on_unknown))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_handler(MessageHandler(allowed & (filters.VOICE | filters.AUDIO), on_audio))
+    app.add_handler(MessageHandler(
+        allowed & (filters.PHOTO | filters.VIDEO | filters.VIDEO_NOTE | filters.Document.ALL | filters.Sticker.ALL
+                   | filters.ANIMATION | filters.LOCATION | filters.CONTACT | filters.POLL),
+        on_unsupported,
+    ))
     app.add_handler(CallbackQueryHandler(on_not_funny, pattern=f"^{NOT_FUNNY}$"))
     app.add_handler(MessageHandler(~allowed, on_stranger), group=1)
     return app
