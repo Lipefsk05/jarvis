@@ -147,6 +147,14 @@ class AssistantTest(unittest.TestCase):
             roles = [m["role"] for m in talker.calls[1][1]]
             self.assertEqual(roles, ["user", "assistant", "user"])  # no model text was stored for the action turn
 
+    def test_the_answering_provider_is_recorded_in_the_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            talker = FakeTalker([Reply("oi", 100, 10, provider="gemini", cost_usd=0.0)])
+            a, budget = self.make(tmp, talker)
+            a.respond(1, "e aí")
+            self.assertEqual(budget.report()["providers"]["gemini"]["calls"], 1)
+            self.assertEqual(a.provider_info(), [])  # a plain fake talker does not describe itself
+
     def test_unknown_or_malformed_tool_calls_are_ignored(self):
         for call in (ToolCall("apagar_tudo", {}), ToolCall("anotar", {}), ToolCall("anotar", {"texto": 42})):
             with tempfile.TemporaryDirectory() as tmp:

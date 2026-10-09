@@ -44,6 +44,16 @@ class GroqFallbackTest(unittest.TestCase):
         talker._complete = fake_complete
         return talker
 
+    def test_limits_are_read_from_the_response_headers(self):
+        from jarvis.talker.groq_provider import parse_limits
+
+        headers = {"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "945",
+                   "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "7200"}
+        self.assertEqual(parse_limits(headers), {"requests_limit": 1000, "requests_remaining": 945,
+                                                 "tokens_limit": 8000, "tokens_remaining": 7200})
+        self.assertIsNone(parse_limits({}))
+        self.assertEqual(parse_limits({"x-ratelimit-limit-requests": "oops"}), None)
+
     def test_reasoning_kept_minimal_only_for_gpt_oss(self):
         t = self.make({})
         self.assertEqual(t._extra("openai/gpt-oss-120b"), {"reasoning_effort": "low"})

@@ -30,6 +30,7 @@ from .humor import HumorGate
 from .inbox import write_note
 from .mind import load_pending, resolve_query, select
 from .telegram_format import format_items, format_summary, safe
+from .usage import format_usage
 from .persona import load_template
 from .talker.factory import build_talker
 
@@ -96,7 +97,7 @@ def build_application(settings: Settings) -> Application:
             await reply_tasks(message, task_query_words(action.area, min_len=3))
             assistant.remember(chat_id, "(Mostrei as pendências" + (f" de {action.area}" if action.area else "") + ".)")
         elif action.name == "ver_gasto":
-            await message.reply_text(budget.summary())
+            await send_usage(message)
             assistant.remember(chat_id, "(Mostrei o uso de hoje.)")
         elif action.name == "mostrar_ajuda":
             await send_help(message)
@@ -164,8 +165,15 @@ def build_application(settings: Settings) -> Application:
     async def on_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(UNKNOWN_COMMAND)
 
+    async def send_usage(message) -> None:
+        await message.reply_text(
+            format_usage(budget.report(), assistant.provider_info()),
+            parse_mode=ParseMode.HTML,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+
     async def on_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.effective_message.reply_text(budget.summary())
+        await send_usage(update.effective_message)
 
     async def on_forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         history.clear(update.effective_chat.id)

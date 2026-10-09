@@ -2,12 +2,30 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from .base import Reply, TalkerError, ToolCall
 
 REQUEST_TIMEOUT_S = 15.0
 # Auth/validation problems will not be fixed by trying another model.
 NO_FALLBACK_CODES = {400, 401, 403}
+
+
+def parse_limits(headers) -> dict | None:
+    """Rate limits the API reports on every response (requests per day, tokens per minute)."""
+    def number(name: str) -> int | None:
+        try:
+            return int(headers.get(name))
+        except (TypeError, ValueError):
+            return None
+
+    limits = {
+        "requests_limit": number("x-ratelimit-limit-requests"),
+        "requests_remaining": number("x-ratelimit-remaining-requests"),
+        "tokens_limit": number("x-ratelimit-limit-tokens"),
+        "tokens_remaining": number("x-ratelimit-remaining-tokens"),
+    }
+    return limits if any(v is not None for v in limits.values()) else None
 
 
 class GroqTalker:
@@ -18,6 +36,7 @@ class GroqTalker:
         self._client = Groq(api_key=api_key, timeout=REQUEST_TIMEOUT_S, max_retries=0)
         self._models = [m for m in models if m]
         self._max_tokens = max_tokens
+        self.limits: dict | None = None  # last limits reported by the API, for /uso
 
     @staticmethod
     def _extra(model: str) -> dict:
@@ -30,12 +49,16 @@ class GroqTalker:
         if tools:
             extra["tools"] = tools
             extra["tool_choice"] = "auto"
-        return self._client.chat.completions.create(
+        raw = self._client.chat.completions.with_raw_response.create(
             model=model,
             messages=[{"role": "system", "content": system}, *messages],
             max_tokens=self._max_tokens,
             **extra,
         )
+        limits = parse_limits(raw.headers)
+        if limits:
+            self.limits = {**limits, "at": datetime.now().strftime("%H:%M")}
+        return raw.parse()
 
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
         last_error = "NoModelConfigured"

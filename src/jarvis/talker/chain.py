@@ -26,6 +26,21 @@ class ChainTalker:
     def names(self) -> list[str]:
         return [m.name for m in self._members]
 
+    def info(self) -> list[dict]:
+        """For /uso: each provider, its main model, whether it is free, and the last limits it reported."""
+        out = []
+        for member in self._members:
+            models = list(getattr(member.talker, "_models", []))
+            if not models and hasattr(member.talker, "_model"):
+                models = [member.talker._model]
+            out.append({
+                "name": member.name,
+                "model": models[0] if models else "",
+                "free": member.price_in == 0 and member.price_out == 0,
+                "limits": getattr(member.talker, "limits", None),
+            })
+        return out
+
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
         errors: list[str] = []
         for index, member in enumerate(self._members):

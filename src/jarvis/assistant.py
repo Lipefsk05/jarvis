@@ -96,6 +96,11 @@ class Assistant:
         except OSError:
             return ""
 
+    def provider_info(self) -> list[dict]:
+        """Which providers are in the chain (empty if the talker does not describe itself)."""
+        info = getattr(self._talker, "info", None)
+        return info() if callable(info) else []
+
     def remember(self, chat_id: int, text: str) -> None:
         """Record what the system answered for an action, so later turns know it happened."""
         self._history.add(chat_id, "assistant", text)
@@ -129,7 +134,7 @@ class Assistant:
             self._history.drop_last(chat_id)
             return AssistantReply(FAILED_MESSAGE)
 
-        self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd)
+        self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd, reply.provider)
         action = parse_action(reply.tool_call)
         if action is not None:  # the system answers; any text the model also wrote is dropped
             return AssistantReply("", provider=reply.provider, action=action)

@@ -30,7 +30,8 @@ class Budget:
         return self._clock().strftime("%Y-%m-%d")
 
     def _load(self) -> dict:
-        fresh = {"date": self._today(), "input": 0, "output": 0, "cost": 0.0, "calls": 0, "warned": False}
+        fresh = {"date": self._today(), "input": 0, "output": 0, "cost": 0.0, "calls": 0, "warned": False,
+                 "providers": {}, "last_provider": ""}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -57,7 +58,7 @@ class Budget:
     def can_spend(self) -> bool:
         return self.cap_usd is None or self.spent_today() < self.cap_usd
 
-    def add(self, input_tokens: int, output_tokens: int, cost_usd: float | None = None) -> float:
+    def add(self, input_tokens: int, output_tokens: int, cost_usd: float | None = None, provider: str = "") -> float:
         """Record one call and return its cost in USD (computed from the default prices
         unless the provider that answered already priced it)."""
         if cost_usd is None:
@@ -68,6 +69,15 @@ class Budget:
         data["output"] += output_tokens
         data["cost"] += cost
         data["calls"] += 1
+        if provider:
+            entry = data.setdefault("providers", {}).setdefault(
+                provider, {"calls": 0, "input": 0, "output": 0, "cost": 0.0}
+            )
+            entry["calls"] += 1
+            entry["input"] += input_tokens
+            entry["output"] += output_tokens
+            entry["cost"] += cost
+            data["last_provider"] = provider
         self._save(data)
         return cost
 
@@ -81,6 +91,15 @@ class Budget:
         data["warned"] = True
         self._save(data)
         return True
+
+    def report(self) -> dict:
+        """Today's totals and the per-provider breakdown, for the /uso screen."""
+        data = self._load()
+        return {
+            "date": data["date"], "calls": data["calls"], "input": data["input"], "output": data["output"],
+            "cost": float(data["cost"]), "cap": self.cap_usd, "providers": data.get("providers", {}),
+            "last_provider": data.get("last_provider", ""),
+        }
 
     def summary(self) -> str:
         data = self._load()

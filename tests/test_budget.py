@@ -25,6 +25,29 @@ class BudgetTest(unittest.TestCase):
             self.assertAlmostEqual(b.add(1_000_000, 0, cost_usd=0.25), 0.25)
             self.assertAlmostEqual(b.spent_today(), 0.25)
 
+    def test_per_provider_breakdown_and_last_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b = self.make(tmp)
+            b.add(1000, 100, cost_usd=0.0, provider="groq")
+            b.add(2000, 200, cost_usd=0.0, provider="groq")
+            b.add(500, 50, cost_usd=0.5, provider="anthropic")
+            report = self.make(tmp).report()  # re-read from disk
+            self.assertEqual(report["calls"], 3)
+            self.assertEqual(report["providers"]["groq"], {"calls": 2, "input": 3000, "output": 300, "cost": 0.0})
+            self.assertEqual(report["providers"]["anthropic"]["calls"], 1)
+            self.assertEqual(report["last_provider"], "anthropic")
+            self.assertEqual(report["cap"], 1.0)
+
+    def test_old_usage_files_without_providers_still_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "usage.json"
+            path.parent.mkdir()
+            path.write_text('{"date": "2026-10-08", "input": 10, "output": 5, "cost": 0.0, "calls": 1, "warned": false}', encoding="utf-8")
+            b = self.make(tmp)
+            self.assertEqual(b.report()["providers"], {})
+            b.add(1, 1, provider="groq")
+            self.assertEqual(b.report()["providers"]["groq"]["calls"], 1)
+
     def test_blocks_at_cap(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = self.make(tmp, cap=0.01)

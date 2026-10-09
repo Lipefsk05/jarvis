@@ -63,6 +63,16 @@ class ChainTest(unittest.TestCase):
         chain.reply("sys", MSGS, [{"type": "function"}])
         self.assertEqual((a.tools, b.tools), ([{"type": "function"}], [{"type": "function"}]))
 
+    def test_info_describes_each_member_for_the_usage_screen(self):
+        class Talk:
+            _models = ["main-model", "other"]
+            limits = {"requests_remaining": 5}
+
+        chain = ChainTalker([ChainMember("groq", Talk(), 0.0, 0.0), ChainMember("anthropic", Fake(None), 1.0, 5.0)])
+        first, second = chain.info()
+        self.assertEqual((first["name"], first["model"], first["free"], first["limits"]), ("groq", "main-model", True, {"requests_remaining": 5}))
+        self.assertEqual((second["free"], second["limits"], second["model"]), (False, None, ""))
+
     def test_names(self):
         chain = ChainTalker([ChainMember("a", Fake(None), 0, 0), ChainMember("b", Fake(None), 0, 0)])
         self.assertEqual(chain.names, ["a", "b"])
