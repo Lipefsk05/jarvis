@@ -19,7 +19,7 @@ from .reminders import LATE, LOST, SENT, Reminder, ReminderStore
 log = logging.getLogger(__name__)
 
 TICK_SECONDS = 30
-GRACE = timedelta(minutes=5)
+GRACE = timedelta(minutes=2)  # a normal tick or a quick restart is under this; more is worth saying
 EXPIRES = timedelta(hours=24)
 
 
