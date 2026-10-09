@@ -22,7 +22,7 @@ from telegram.ext import (
 
 from .assistant import Assistant
 from .budget import Budget
-from .commands import asks_capabilities, parse_note_request, task_query_words, wants_tasks
+from .commands import asks_capabilities, parse_note_request, parse_reminder_request, task_query_words, wants_tasks
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
@@ -31,7 +31,10 @@ from .humor import HumorGate
 from .inbox import write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminders import ReminderStore
+from .reminder_request import plan_reminder
+from .reminder_text import confirmation, listing
+from .reminders import ReminderError, ReminderStore
+from .when import Ask
 from .telegram_format import format_items, format_summary, safe
 from .usage import format_usage
 from .persona import load_template
@@ -66,6 +69,8 @@ def build_application(settings: Settings) -> Application:
     )
     gate = HumorGate()
     history = History(settings.history_messages, settings.state_dir / "conversa.json")
+    reminders = ReminderStore(settings.state_dir / "lembretes.json")
+    owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
         talker=build_talker(settings),
         budget=budget,
@@ -116,6 +121,10 @@ def build_application(settings: Settings) -> Application:
         if note is not None:  # handled by code: no model call, nothing to invent
             await save_note(message, note)
             return
+        remind = parse_reminder_request(message.text)
+        if remind is not None:  # "me lembra de ..." is handled by code too: validated date, no invention
+            await create_reminder(message, chat_id, remind)
+            return
         if asks_capabilities(message.text):  # the list comes from code, so it is always complete and right
             await send_help(message)
             return
@@ -133,6 +142,50 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text(f"↪ respondido pelo provedor reserva ({reply.provider}).")
         if reply.warn_budget:
             await message.reply_text("Aviso, senhor: já usei 80% do teto de gasto de hoje.")
+
+    REMIND_USAGE = (
+        "Diga quando e o quê, senhor. Ex.: /lembra amanhã às 9 pagar o aluguel, "
+        "/lembra hoje às 19 reunião, 10 min antes, ou /lembra daqui a 2 horas tirar o bolo."
+    )
+
+    async def create_reminder(message, chat_id: int, raw: str) -> None:
+        if not raw:
+            await message.reply_text(REMIND_USAGE)
+            return
+        now = clock()
+        planned = plan_reminder(raw, now, settings.reminder_default_hour)
+        if isinstance(planned, Ask):
+            await message.reply_text(planned.question)
+            return
+        try:
+            reminder = reminders.add(planned.text, planned.due, now, event=planned.event)
+        except ReminderError as exc:
+            await message.reply_text(str(exc))
+            return
+        text = confirmation(reminder, now, planned.hour_assumed)
+        await message.reply_text(text)
+        assistant.remember(chat_id, text)
+
+    async def on_remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        await create_reminder(message, update.effective_chat.id, message.text.partition(" ")[2].strip())
+
+    async def on_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(listing(reminders.pending(), clock()))
+
+    async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        arg = message.text.partition(" ")[2].strip().lstrip("#")
+        if not arg.isdigit():
+            await message.reply_text("Qual lembrete, senhor? Informe o número.\n\n" + listing(reminders.pending(), clock()))
+            return
+        cancelled = reminders.cancel(int(arg), clock())
+        if cancelled is None:
+            await message.reply_text(f"Não encontrei o lembrete {arg} entre os pendentes, senhor.")
+            return
+        text = f"Lembrete {cancelled.id} cancelado, senhor: {cancelled.text}."
+        await message.reply_text(text)
+        assistant.remember(update.effective_chat.id, text)
 
     async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -220,9 +273,6 @@ def build_application(settings: Settings) -> Application:
             application.bot_data["outage"] = outage
         application.bot_data["heartbeat"] = asyncio.create_task(heartbeat.run(beat_path, clock))
 
-    reminders = ReminderStore(settings.state_dir / "lembretes.json")
-    owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
-
     async def start_scheduler(application: Application) -> None:
         outbox = Outbox([TelegramChannel(application.bot, owner_chat)])
         application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
@@ -251,6 +301,9 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
+    app.add_handler(CommandHandler("lembra", on_remind, filters=allowed))
+    app.add_handler(CommandHandler("lembretes", on_reminders, filters=allowed))
+    app.add_handler(CommandHandler("cancela", on_cancel, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler(["ajuda", "help"], on_help, filters=allowed))

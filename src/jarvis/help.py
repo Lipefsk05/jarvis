@@ -20,6 +20,14 @@ COMMANDS = (
             "e palavras extras estreitam (/tarefas dindin feedback). Perdoa erro de digitação no nome da área."),
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind",
             'guarda uma nota no inbox do seu Mind. Também funciona em linguagem natural: "anota que preciso comprar pão".'),
+    Command("lembra", "<quando> <o quê>", "Marca um lembrete",
+            'marca um lembrete que eu entrego no Telegram na hora certa. Ex.: /lembra amanhã às 9 pagar o aluguel; '
+            '"hoje às 19 reunião, 10 min antes" avisa com antecedência; "daqui a 2 horas" também vale. '
+            'Sem hora, assumo a padrão e aviso.'),
+    Command("lembretes", "", "Lista os lembretes pendentes",
+            "lista os lembretes pendentes, com o número de cada um."),
+    Command("cancela", "<número>", "Cancela um lembrete",
+            "cancela o lembrete de número dado (veja os números em /lembretes)."),
     Command("uso", "", "Gasto e chamadas de hoje",
             "mostra as chamadas, os tokens e o custo de hoje, com o teto diário."),
     Command("esquece", "", "Limpa a conversa",
@@ -31,9 +39,10 @@ COMMANDS = (
 NATURAL_LANGUAGE = (
     'Pergunte "quais tarefas eu tenho?", "tarefas do dindin" ou "o que falta no domo" e eu respondo como no /tarefas (só leitura).',
     'Escreva "anota que ...", "pode anotar ..." ou "guarda isso: ..." e eu guardo a nota no inbox do Mind.',
+    'Escreva "me lembra de ... amanhã às 9" e eu marco o lembrete, no mesmo formato do /lembra.',
     "Converso e tiro dúvidas no que eu sei.",
 )
-NOT_YET = "e-mail, agenda, lembretes, áudio e controlar o computador"
+NOT_YET = "e-mail, agenda, áudio e controlar o computador"
 
 
 def menu() -> list[tuple[str, str]]:

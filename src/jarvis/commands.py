@@ -35,6 +35,19 @@ def parse_note_request(text: str) -> str | None:
     return _FILLER.sub("", match.group(1).strip()).strip()
 
 
+# "me lembra de pagar a luz amanhã às 9". Needs "me": a bare "lembra do que falei?" is a question about memory.
+_REMINDER = re.compile(
+    r"^\s*(?:jarvis[\s,:]+)?(?:(?:pode\s+|poderia\s+)?me\s+(?:lembra|lembre|lembrar)|(?:lembra|lembre)-me)\b[\s:,\-]*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_reminder_request(text: str) -> str | None:
+    """Return what follows "me lembra" if the message starts a reminder request, else None."""
+    match = _REMINDER.match(text)
+    return match.group(1).strip() if match else None
+
+
 _TASKS_REQUEST = re.compile(
     r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|o que (?:ainda )?(?:falta|resta)|o que tem (?:pra|para|que) fazer|pendentes?)\b"
 )

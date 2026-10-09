@@ -43,3 +43,25 @@ class ParseNoteRequestTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReminderRequestTest(unittest.TestCase):
+    def test_me_lembra_starts_a_request(self):
+        from jarvis.commands import parse_reminder_request
+
+        cases = {
+            "me lembra de pagar a luz amanhã às 9": "de pagar a luz amanhã às 9",
+            "Jarvis, me lembra hoje às 19 da reunião": "hoje às 19 da reunião",
+            "pode me lembrar amanhã às 8 do remédio": "amanhã às 8 do remédio",
+            "lembra-me de ligar": "de ligar",
+            "me lembra": "",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(parse_reminder_request(text), expected, text)
+
+    def test_other_sentences_are_not_reminder_requests(self):
+        from jarvis.commands import parse_reminder_request
+
+        for text in ("lembra do que eu falei ontem?", "você lembra da senha?", "eu lembro disso", "lembrar é viver",
+                     "bom dia", "anota que preciso de pão"):
+            self.assertIsNone(parse_reminder_request(text), text)
