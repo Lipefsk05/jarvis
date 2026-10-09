@@ -56,6 +56,9 @@ class ReminderRequestTest(unittest.TestCase):
             "lembra-me de ligar": "de ligar",
             "me lembra": "",
         }
+        # an answer to an offer is not a request: it must reach the model, which has the conversation
+        for yes in ("Me lembre sim", "me lembra sim", "pode me lembrar sim", "me lembra sim por favor"):
+            cases[yes] = None
         for text, expected in cases.items():
             self.assertEqual(parse_reminder_request(text), expected, text)
 

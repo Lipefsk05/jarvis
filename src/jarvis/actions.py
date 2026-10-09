@@ -43,8 +43,8 @@ TOOLS = [
         "criar_lembrete",
         "Marca um lembrete que o sistema entrega na hora. Chame quando o senhor pedir para ser lembrado ou avisado de "
         "algo num momento (\"me lembra\", \"me avisa\", \"não me deixa esquecer\" com dia ou hora). Um compromisso "
-        "só contado (\"tenho dentista amanhã\") é conversa, não pedido de aviso: nesse caso NÃO chame, pergunte se ele "
-        "quer ser avisado. Nunca calcule datas: passe o momento com as palavras dele.",
+        "só contado (\"tenho dentista amanhã\") é conversa, não pedido de aviso. Nunca calcule datas: passe o momento "
+        "com as palavras dele.",
         {
             "texto": {"type": "string", "description": "O que lembrar, curto, sem o pedido (\"pg jovem\", \"pagar o aluguel\")."},
             "quando": {"type": "string", "description": "O momento nas palavras do senhor: \"amanhã às 9\", \"hoje às 19\", \"daqui a 2 horas\". Sem hora dita, só o dia."},

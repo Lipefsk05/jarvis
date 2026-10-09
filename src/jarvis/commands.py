@@ -45,7 +45,11 @@ _REMINDER = re.compile(
 def parse_reminder_request(text: str) -> str | None:
     """Return what follows "me lembra" if the message starts a reminder request, else None."""
     match = _REMINDER.match(text)
-    return match.group(1).strip() if match else None
+    if not match:
+        return None
+    rest = match.group(1).strip()
+    # "me lembre sim" answers an offer the assistant made; it is not a new request, so let it reach the model.
+    return None if rest and is_yes(rest) else rest
 
 
 # A reminder is only created when the user asked to be told something. A bare "tenho dentista
