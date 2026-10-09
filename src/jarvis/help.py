@@ -20,6 +20,8 @@ COMMANDS = (
             "e palavras extras estreitam (/tarefas dindin feedback). Perdoa erro de digitação no nome da área."),
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind",
             'guarda uma nota no inbox do seu Mind. Também funciona em linguagem natural: "anota que preciso comprar pão".'),
+    Command("desfaz", "", "Desfaz a última nota",
+            "apaga a última nota que eu guardei no inbox do Mind."),
     Command("lembra", "<quando> <o quê>", "Marca um lembrete",
             'marca um lembrete que eu entrego no Telegram na hora certa. Ex.: /lembra amanhã às 9 pagar o aluguel; '
             '"hoje às 19 reunião, 10 min antes" avisa com antecedência; "daqui a 2 horas" também vale. '

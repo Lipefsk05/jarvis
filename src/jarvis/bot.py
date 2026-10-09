@@ -28,7 +28,7 @@ from .config import Settings
 from .conversation import History
 from . import heartbeat, scheduler
 from .humor import HumorGate
-from .inbox import write_note
+from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
 from .reminder_request import plan_parts, plan_reminder
@@ -70,6 +70,7 @@ def build_application(settings: Settings) -> Application:
     gate = HumorGate()
     history = History(settings.history_messages, settings.state_dir / "conversa.json")
     reminders = ReminderStore(settings.state_dir / "lembretes.json")
+    notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
         talker=build_talker(settings),
@@ -91,12 +92,26 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text("O que devo anotar, senhor? Use /anota <texto>.")
             return
         path = await asyncio.to_thread(write_note, settings.inbox_dir, text, clock(), "telegram")
+        notes.add(path)
         await message.reply_text(f"Anotado, senhor ({path.name}).")
+
+    async def undo_note(message, chat_id: int) -> None:
+        undone = await asyncio.to_thread(notes.undo_last, settings.inbox_dir)
+        if undone is None:
+            reply = "Não há nota minha para desfazer, senhor."
+        elif undone[1] is None:
+            reply = f"A nota {undone[0]} já não está no inbox, senhor (talvez já tenha sido integrada ao Mind). Nada a desfazer."
+        else:
+            preview = undone[1] if len(undone[1]) <= 80 else undone[1][:77] + "…"
+            reply = f"Nota desfeita, senhor: “{preview}” ({undone[0]})."
+        await message.reply_text(reply)
+        assistant.remember(chat_id, reply)
 
     async def run_action(message, chat_id: int, action) -> None:
         """Execute what the model asked for. The text sent back is produced here, not by the model."""
         if action.name == "anotar":
             path = await asyncio.to_thread(write_note, settings.inbox_dir, action.texto, clock(), "telegram")
+            notes.add(path)
             preview = action.texto if len(action.texto) <= 80 else action.texto[:77] + "…"
             confirmation = f"Anotado, senhor: “{preview}” ({path.name})."
             await message.reply_text(confirmation)
@@ -214,6 +229,9 @@ def build_application(settings: Settings) -> Application:
             return
         await cancel_reminder(message, update.effective_chat.id, int(arg), "")
 
+    async def on_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await undo_note(update.effective_message, update.effective_chat.id)
+
     async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         await save_note(message, message.text.partition(" ")[2].strip())
@@ -328,6 +346,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
+    app.add_handler(CommandHandler(["desfaz", "desfazer"], on_undo, filters=allowed))
     app.add_handler(CommandHandler("lembra", on_remind, filters=allowed))
     app.add_handler(CommandHandler("lembretes", on_reminders, filters=allowed))
     app.add_handler(CommandHandler("cancela", on_cancel, filters=allowed))
