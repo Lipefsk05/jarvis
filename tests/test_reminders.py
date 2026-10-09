@@ -146,3 +146,18 @@ class EventFieldTest(unittest.TestCase):
                 del item["event"]  # a file written before the field existed
             path.write_text(json.dumps(raw), encoding="utf-8")
             self.assertIsNone(ReminderStore(path).pending()[0].event)
+
+
+class SearchTest(unittest.TestCase):
+    def test_finds_pending_by_words_ignoring_accents_and_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ReminderStore(Path(tmp) / "x.json")
+            a = store.add("Pagar o ALUGUEL", later(hours=1), NOW)
+            store.add("Consulta no médico", later(hours=2), NOW)
+            done = store.add("aluguel do carro", later(hours=3), NOW)
+            store.cancel(done.id, NOW)
+            self.assertEqual([r.id for r in store.search("aluguel")], [a.id])
+            self.assertEqual([r.text for r in store.search("medico")], ["Consulta no médico"])
+            self.assertEqual(store.search("pagar aluguel")[0].id, a.id)
+            self.assertEqual(store.search("   "), [])
+            self.assertEqual(store.search("inexistente"), [])

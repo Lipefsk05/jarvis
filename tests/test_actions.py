@@ -42,3 +42,47 @@ class ParseActionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReminderToolsTest(unittest.TestCase):
+    def test_create_reminder_valid_and_with_lead(self):
+        self.assertEqual(
+            parse_action(ToolCall("criar_lembrete", {"texto": " pg jovem ", "quando": "hoje às 19", "antecedencia_minutos": 10})),
+            Action("criar_lembrete", texto="pg jovem", quando="hoje às 19", antecedencia=10),
+        )
+        self.assertEqual(parse_action(ToolCall("criar_lembrete", {"texto": "x", "quando": "amanhã", "antecedencia_minutos": "30"})).antecedencia, 30)
+        self.assertEqual(parse_action(ToolCall("criar_lembrete", {"texto": "x", "quando": "amanhã", "antecedencia_minutos": 15.0})).antecedencia, 15)
+        self.assertEqual(parse_action(ToolCall("criar_lembrete", {"texto": "x", "quando": "amanhã", "antecedencia_minutos": None})).antecedencia, 0)
+
+    def test_create_reminder_rejects_missing_or_absurd_arguments(self):
+        for args in ({"texto": "x"}, {"quando": "amanhã"}, {"texto": " ", "quando": "amanhã"},
+                     {"texto": "x", "quando": "amanhã", "antecedencia_minutos": -5},
+                     {"texto": "x", "quando": "amanhã", "antecedencia_minutos": 99999},
+                     {"texto": "x", "quando": "amanhã", "antecedencia_minutos": "dez"},
+                     {"texto": "x", "quando": "amanhã", "antecedencia_minutos": True},
+                     {"texto": ["x"], "quando": "amanhã"}):
+            self.assertIsNone(parse_action(ToolCall("criar_lembrete", args)), args)
+
+    def test_cancel_reminder_needs_a_number_or_a_search(self):
+        self.assertEqual(parse_action(ToolCall("cancelar_lembrete", {"numero": 3})), Action("cancelar_lembrete", numero=3))
+        self.assertEqual(parse_action(ToolCall("cancelar_lembrete", {"busca": " aluguel "})), Action("cancelar_lembrete", busca="aluguel"))
+        for args in ({}, {"numero": 0}, {"numero": -1}, {"numero": "abc"}, {"busca": "  "}):
+            self.assertIsNone(parse_action(ToolCall("cancelar_lembrete", args)), args)
+        self.assertEqual(parse_action(ToolCall("listar_lembretes", {})), Action("listar_lembretes"))
+
+
+class OptionalFieldsAcceptNullTest(unittest.TestCase):
+    def test_optional_fields_declare_null_because_models_send_it(self):
+        # Groq rejects `null` for a field declared only as integer/string (HTTP 400 tool_use_failed).
+        for name, field in (("criar_lembrete", "antecedencia_minutos"), ("cancelar_lembrete", "numero"), ("cancelar_lembrete", "busca")):
+            spec = next(t for t in TOOLS if t["function"]["name"] == name)["function"]["parameters"]
+            self.assertIn("null", spec["properties"][field]["type"], f"{name}.{field}")
+            self.assertNotIn(field, spec["required"])
+
+    def test_null_arguments_are_treated_as_absent(self):
+        self.assertEqual(
+            parse_action(ToolCall("criar_lembrete", {"texto": "x", "quando": "amanhã", "antecedencia_minutos": None})).antecedencia, 0)
+        self.assertEqual(
+            parse_action(ToolCall("cancelar_lembrete", {"numero": None, "busca": "aluguel"})), Action("cancelar_lembrete", busca="aluguel"))
+        self.assertEqual(
+            parse_action(ToolCall("cancelar_lembrete", {"numero": 3, "busca": None})), Action("cancelar_lembrete", numero=3))

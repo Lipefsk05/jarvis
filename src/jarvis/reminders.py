@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .textutil import fold
+
 log = logging.getLogger(__name__)
 
 PENDING, SENT, LATE, LOST, CANCELLED = "pendente", "enviado", "atrasado", "perdido", "cancelado"
@@ -128,6 +130,13 @@ class ReminderStore:
 
     def pending(self) -> list[Reminder]:
         return sorted((r for r in self._items.values() if r.status == PENDING), key=lambda r: (r.due, r.id))
+
+    def search(self, query: str) -> list[Reminder]:
+        """Pending reminders whose text contains every word of the query (accents and case ignored)."""
+        words = fold(query).split()
+        if not words:
+            return []
+        return [r for r in self.pending() if all(w in fold(r.text) for w in words)]
 
     def due(self, now: datetime) -> list[Reminder]:
         _aware(now, "now")

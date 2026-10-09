@@ -31,7 +31,7 @@ from .humor import HumorGate
 from .inbox import write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminder_request import plan_reminder
+from .reminder_request import plan_parts, plan_reminder
 from .reminder_text import confirmation, listing
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -104,6 +104,14 @@ def build_application(settings: Settings) -> Application:
         elif action.name == "consultar_tarefas":
             await reply_tasks(message, task_query_words(action.area, min_len=3))
             assistant.remember(chat_id, "(Mostrei as pendências" + (f" de {action.area}" if action.area else "") + ".)")
+        elif action.name == "criar_lembrete":
+            planned = plan_parts(action.texto, action.quando, action.antecedencia, clock(), settings.reminder_default_hour)
+            await store_reminder(message, chat_id, planned)
+        elif action.name == "listar_lembretes":
+            await message.reply_text(listing(reminders.pending(), clock()))
+            assistant.remember(chat_id, "(Mostrei os lembretes pendentes.)")
+        elif action.name == "cancelar_lembrete":
+            await cancel_reminder(message, chat_id, action.numero, action.busca)
         elif action.name == "ver_gasto":
             await send_usage(message)
             assistant.remember(chat_id, "(Mostrei o uso de hoje.)")
@@ -148,12 +156,9 @@ def build_application(settings: Settings) -> Application:
         "/lembra hoje às 19 reunião, 10 min antes, ou /lembra daqui a 2 horas tirar o bolo."
     )
 
-    async def create_reminder(message, chat_id: int, raw: str) -> None:
-        if not raw:
-            await message.reply_text(REMIND_USAGE)
-            return
+    async def store_reminder(message, chat_id: int, planned) -> None:
+        """Store a planned reminder (or relay the question) and confirm in the code's own words."""
         now = clock()
-        planned = plan_reminder(raw, now, settings.reminder_default_hour)
         if isinstance(planned, Ask):
             await message.reply_text(planned.question)
             return
@@ -163,6 +168,30 @@ def build_application(settings: Settings) -> Application:
             await message.reply_text(str(exc))
             return
         text = confirmation(reminder, now, planned.hour_assumed)
+        await message.reply_text(text)
+        assistant.remember(chat_id, text)
+
+    async def create_reminder(message, chat_id: int, raw: str) -> None:
+        if not raw:
+            await message.reply_text(REMIND_USAGE)
+            return
+        await store_reminder(message, chat_id, plan_reminder(raw, clock(), settings.reminder_default_hour))
+
+    async def cancel_reminder(message, chat_id: int, numero: int, busca: str) -> None:
+        if not numero:
+            found = reminders.search(busca)
+            if not found:
+                await message.reply_text(f"Não encontrei lembrete pendente com “{busca}”, senhor.")
+                return
+            if len(found) > 1:
+                await message.reply_text("Encontrei mais de um, senhor. Diga o número:\n\n" + listing(found, clock()))
+                return
+            numero = found[0].id
+        cancelled = reminders.cancel(numero, clock())
+        if cancelled is None:
+            await message.reply_text(f"Não encontrei o lembrete {numero} entre os pendentes, senhor.")
+            return
+        text = f"Lembrete {cancelled.id} cancelado, senhor: {cancelled.text}."
         await message.reply_text(text)
         assistant.remember(chat_id, text)
 
@@ -179,13 +208,7 @@ def build_application(settings: Settings) -> Application:
         if not arg.isdigit():
             await message.reply_text("Qual lembrete, senhor? Informe o número.\n\n" + listing(reminders.pending(), clock()))
             return
-        cancelled = reminders.cancel(int(arg), clock())
-        if cancelled is None:
-            await message.reply_text(f"Não encontrei o lembrete {arg} entre os pendentes, senhor.")
-            return
-        text = f"Lembrete {cancelled.id} cancelado, senhor: {cancelled.text}."
-        await message.reply_text(text)
-        assistant.remember(update.effective_chat.id, text)
+        await cancel_reminder(message, update.effective_chat.id, int(arg), "")
 
     async def on_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

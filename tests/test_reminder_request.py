@@ -91,3 +91,16 @@ class PlanTest(unittest.TestCase):
 
     def test_invalid_time_inside_a_sentence_is_questioned(self):
         self.assertIsInstance(plan_reminder("31/02 às 9 aniversário", NOW), Ask)
+
+
+class PlanPartsTest(unittest.TestCase):
+    def test_parts_from_the_model_become_a_plan(self):
+        from jarvis.reminder_request import plan_parts
+
+        plan = plan_parts("pg jovem", "hoje às 19", 10, NOW)
+        self.assertEqual((plan.text, plan.due, plan.event), ("pg jovem", at(9, 10, 18, 50), at(9, 10, 19)))
+        self.assertEqual(plan_parts("x", "amanhã", 0, NOW).kind, "hora")
+        self.assertEqual(plan_parts("x", "amanhã", 0, NOW, 9).hour_assumed, True)
+        self.assertEqual(plan_parts("   ", "amanhã às 9", 0, NOW).kind, "texto")
+        self.assertEqual(plan_parts("x", "quando der", 0, NOW).kind, "entendi")
+        self.assertEqual(plan_parts("x", "daqui a 5 minutos", 10, NOW).kind, "passou")

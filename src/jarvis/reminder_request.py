@@ -160,11 +160,9 @@ def _only_when(side: str) -> bool:
     return bool(norm) and all(_is_vocab(t) or t in {"antes", "uns", "umas"} for t in norm)
 
 
-def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> Planned | Ask:
-    text, phrase, lead = split_request(raw)
-    if not phrase:
-        return parse("", now)  # the standard "para quando devo marcar?" question
-    if not text:
+def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: int | None = None) -> Planned | Ask:
+    """Plan a reminder whose pieces are already separated (what, when in words, minutes of advance)."""
+    if not text.strip():
         return Ask("texto", "O que devo lembrar, senhor?")
     if lead > MAX_LEAD_MINUTES:
         return Ask("invalido", "Essa antecedência é grande demais, senhor. Pode repetir?")
@@ -177,4 +175,12 @@ def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> P
             "passou",
             f"Com {human_minutes(lead)} de antecedência o aviso já teria passado, senhor. Para quando devo marcar?",
         )
-    return Planned(text, due, when.dt if lead else None, lead, when.hour_assumed)
+    return Planned(text.strip(), due, when.dt if lead else None, lead, when.hour_assumed)
+
+
+def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> Planned | Ask:
+    """Plan a reminder from one free sentence (the /lembra command and "me lembra ...")."""
+    text, phrase, lead = split_request(raw)
+    if not phrase:
+        return parse("", now)  # the standard "para quando devo marcar?" question
+    return plan_parts(text, phrase, lead, now, default_hour)
