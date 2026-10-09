@@ -48,6 +48,17 @@ def parse_reminder_request(text: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+# A reminder is only created when the user asked to be told something. A bare "tenho dentista
+# amanhã às 14h" is a remark, not a request, whatever the model decides.
+_REMINDER_INTENT = re.compile(
+    r"\b(?:lembr\w*|avis\w*|alert\w*|notific\w*|desperta\w*|nao (?:me )?(?:deix\w*|esquec\w*))"
+)
+
+
+def has_reminder_intent(text: str) -> bool:
+    return bool(_REMINDER_INTENT.search(fold(text)))
+
+
 _TASKS_REQUEST = re.compile(
     r"(?:^|\W)(?:tarefas?|pendencias?|afazeres|to-?do|o que (?:eu )?(?:tenho|preciso|falta)(?: que| pra| para)? fazer|o que (?:ainda )?(?:falta|resta)|o que tem (?:pra|para|que) fazer|pendentes?)\b"
 )

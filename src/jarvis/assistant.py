@@ -10,7 +10,7 @@ from typing import Callable
 
 from .actions import TOOLS, Action, parse_action
 from .budget import Budget
-from .commands import task_query_words, wants_tasks
+from .commands import has_reminder_intent, task_query_words, wants_tasks
 from .conversation import History
 from .humor import HumorGate
 from .mind import tasks_context
@@ -105,6 +105,14 @@ class Assistant:
         """Record what the system answered for an action, so later turns know it happened."""
         self._history.add(chat_id, "assistant", text)
 
+    def _reminder_wanted(self, chat_id: int, text: str) -> bool:
+        """True if this message asks for a reminder, or confirms a reminder the assistant just offered."""
+        if has_reminder_intent(text):
+            return True
+        history = self._history.messages(chat_id)
+        previous = history[-2] if len(history) >= 2 else None
+        return bool(previous and previous["role"] == "assistant" and has_reminder_intent(previous["content"]))
+
     def _tasks(self, text: str) -> str:
         if self._mind_dir is None or not wants_tasks(text):
             return ""
@@ -136,6 +144,11 @@ class Assistant:
 
         self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd, reply.provider)
         action = parse_action(reply.tool_call)
+        if action is not None and action.name == "criar_lembrete" and not self._reminder_wanted(chat_id, text):
+            # The model decided on its own; the user only mentioned something. Ask instead of creating it.
+            question = f'Quer que eu o avise disso, senhor? Diga "me lembra {action.quando}" e eu marco.'
+            self._history.add(chat_id, "assistant", question)
+            return AssistantReply(question, provider=reply.provider)
         if action is not None:  # the system answers; any text the model also wrote is dropped
             return AssistantReply("", provider=reply.provider, action=action)
         clean, joked = split_joke(reply.text)

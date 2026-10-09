@@ -204,3 +204,42 @@ class AssistantTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReminderGuardTest(unittest.TestCase):
+    def make(self, tmp, talker):
+        budget = Budget(Path(tmp) / "usage.json", 10.0, 1.0, 5.0, clock=lambda: NOW)
+        return Assistant(
+            talker=talker, budget=budget, gate=HumorGate(min_gap=2), history=History(),
+            template=TEMPLATE, clock=lambda: NOW,
+        )
+
+    def call(self):
+        return Reply("", 100, 10, tool_call=ToolCall("criar_lembrete", {"texto": "dentista", "quando": "amanhã às 14h"}))
+
+    def test_a_remark_is_not_a_reminder_request_even_if_the_model_calls_the_tool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.make(tmp, FakeTalker([self.call()]))
+            r = a.respond(1, "tenho dentista amanhã às 14h")
+            self.assertIsNone(r.action)
+            self.assertIn("Quer que eu o avise", r.text)
+            self.assertIn("amanhã às 14h", r.text)
+
+    def test_explicit_requests_go_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for text in ("me lembra do dentista amanhã às 14h", "me avisa amanhã às 14h do dentista",
+                         "não me deixa esquecer do dentista amanhã às 14h", "preciso ser lembrado do dentista amanhã às 14h"):
+                a = self.make(tmp, FakeTalker([self.call()]))
+                self.assertEqual(a.respond(1, text).action.name, "criar_lembrete", text)
+
+    def test_a_yes_after_the_offer_goes_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.make(tmp, FakeTalker([self.call(), self.call()]))
+            self.assertIsNone(a.respond(1, "tenho dentista amanhã às 14h").action)
+            self.assertEqual(a.respond(1, "sim, pode").action.name, "criar_lembrete")
+
+    def test_a_yes_without_any_offer_does_not_create_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.make(tmp, FakeTalker([Reply("Bom dia, senhor.", 10, 5), self.call()]))
+            a.respond(1, "bom dia")
+            self.assertIsNone(a.respond(1, "sim, pode").action)
