@@ -26,10 +26,12 @@ from .commands import asks_capabilities, parse_note_request, task_query_words, w
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
-from . import heartbeat
+from . import heartbeat, scheduler
 from .humor import HumorGate
 from .inbox import write_note
 from .mind import load_pending, resolve_query, select
+from .outbox import Outbox, TelegramChannel
+from .reminders import ReminderStore
 from .telegram_format import format_items, format_summary, safe
 from .usage import format_usage
 from .persona import load_template
@@ -218,6 +220,15 @@ def build_application(settings: Settings) -> Application:
             application.bot_data["outage"] = outage
         application.bot_data["heartbeat"] = asyncio.create_task(heartbeat.run(beat_path, clock))
 
+    reminders = ReminderStore(settings.state_dir / "lembretes.json")
+    owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
+
+    async def start_scheduler(application: Application) -> None:
+        outbox = Outbox([TelegramChannel(application.bot, owner_chat)])
+        application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
+            reminders, outbox, clock, on_delivered=lambda text: assistant.remember(owner_chat, text),
+        ))
+
     async def publish_menu(application: Application) -> None:
         try:
             await application.bot.set_my_commands([BotCommand(name, text) for name, text in menu()])
@@ -227,6 +238,7 @@ def build_application(settings: Settings) -> Application:
     async def post_init(application: Application) -> None:
         await publish_menu(application)
         await start_heartbeat(application)
+        await start_scheduler(application)
 
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
