@@ -1,7 +1,7 @@
 """Talker backed by the Anthropic Messages API."""
 from __future__ import annotations
 
-from .base import Reply, TalkerError
+from .base import Reply, TalkerError, without_tools
 
 
 class AnthropicTalker:
@@ -13,7 +13,8 @@ class AnthropicTalker:
         self._max_tokens = max_tokens
 
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
-        # Tools are not wired for this provider yet: it answers in plain text.
+        # Tools are not wired for this provider yet: it answers in plain text, and is told so.
+        system = without_tools(system, tools)
         try:
             response = self._client.messages.create(
                 model=self._model,

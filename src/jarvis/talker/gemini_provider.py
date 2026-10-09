@@ -1,7 +1,7 @@
 """Talker backed by the Gemini API. Free tier is for testing only: Google may use the prompts."""
 from __future__ import annotations
 
-from .base import Reply, TalkerError
+from .base import Reply, TalkerError, without_tools
 
 REQUEST_TIMEOUT_MS = 15000
 # Auth/validation problems will not be fixed by trying another model.
@@ -39,7 +39,8 @@ class GeminiTalker:
         )
 
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
-        # Tools are not wired for this provider yet: it answers in plain text.
+        # Tools are not wired for this provider yet: it answers in plain text, and is told so.
+        system = without_tools(system, tools)
         types = self._types
         contents = [
             types.Content(
