@@ -41,7 +41,7 @@ class Planned:
 def _norm(token: str) -> str:
     token = unicodedata.normalize("NFKD", token.lower())
     token = "".join(c for c in token if not unicodedata.combining(c))
-    return token.strip(",.;!?()\"'“”")
+    return token.strip(",.;:!?()\"'“”")
 
 
 def _is_vocab(token: str) -> bool:

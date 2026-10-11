@@ -104,3 +104,12 @@ class PlanPartsTest(unittest.TestCase):
         self.assertEqual(plan_parts("   ", "amanhã às 9", 0, NOW).kind, "texto")
         self.assertEqual(plan_parts("x", "quando der", 0, NOW).kind, "entendi")
         self.assertEqual(plan_parts("x", "daqui a 5 minutos", 10, NOW).kind, "passou")
+
+
+class ColonAfterTimeTest(unittest.TestCase):
+    def test_colon_glued_to_hour(self):
+        planned = plan_reminder("todos os dias as 13: Oração", NOW)
+        self.assertIsInstance(planned, Planned)
+        self.assertEqual(planned.text, "Oração")
+        self.assertEqual(planned.repeat, "daily")
+        self.assertEqual(planned.due.hour, 13)

@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
@@ -149,6 +149,8 @@ def build_application(settings: Settings) -> Application:
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
+        if parse_reminder_request(text) is None and await complete_draft(message, chat_id, text):
+            return
         note = parse_note_request(text)
         if note is not None:  # handled by code: no model call, nothing to invent
             await save_note(message, note)
@@ -225,11 +227,35 @@ def build_application(settings: Settings) -> Application:
         await message.reply_text(text)
         assistant.remember(chat_id, text)
 
+    # A half-understood request ("me lembra de orar" -> "para quando?") waits for the answer, so the reply
+    # completes it instead of starting from zero.
+    DRAFT_ASKS = {"entendi", "texto", "hora", "ampm"}
+    DRAFT_TTL = timedelta(minutes=10)
+    drafts: dict[int, tuple[str, datetime]] = {}
+
     async def create_reminder(message, chat_id: int, raw: str) -> None:
         if not raw:
             await message.reply_text(REMIND_USAGE)
             return
-        await store_reminder(message, chat_id, plan_reminder(raw, clock(), settings.reminder_default_hour))
+        now = clock()
+        planned = plan_reminder(raw, now, settings.reminder_default_hour)
+        if isinstance(planned, Ask) and planned.kind in DRAFT_ASKS:
+            drafts[chat_id] = (raw, now)
+        else:
+            drafts.pop(chat_id, None)
+        await store_reminder(message, chat_id, planned)
+
+    async def complete_draft(message, chat_id: int, text: str) -> bool:
+        """True when `text` finished a pending reminder request (and it was stored)."""
+        draft = drafts.pop(chat_id, None)
+        now = clock()
+        if draft is None or now - draft[1] > DRAFT_TTL:
+            return False
+        planned = plan_reminder(f"{draft[0]} {text}", now, settings.reminder_default_hour)
+        if isinstance(planned, Ask):
+            return False
+        await store_reminder(message, chat_id, planned)
+        return True
 
     async def cancel_reminder(message, chat_id: int, numero: int, busca: str) -> None:
         if not numero:
