@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .when import MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
+from .when import HOUR_WORDS, MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
 from .reminder_text import human_minutes
 from .repeat import align_first, extract
 
@@ -19,11 +19,12 @@ _TIME = re.compile(r"^\d{1,2}(?:h|hs|hr|hrs)\d{0,2}$|^\d{1,2}:\d{2}$")
 _DATE = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$|^\d{4}-\d{2}-\d{2}(?:t\d{1,2}:\d{2})?$")
 _NUMBER = re.compile(r"^\d{1,4}$")
 _DAY_WORDS = {"hoje", "amanha", "meio-dia", "meia-noite"}
-_PERIODS = {"manha", "tarde", "noite", "madrugada"}
+_PERIODS = {"cedo", "manha", "tarde", "noite", "madrugada"}
 _UNITS = {"min", "minuto", "minutos", "hora", "horas", "h", "dia", "dias", "semana", "semanas"}
-_CONNECTORS = {"de", "da", "do", "a", "as", "em", "daqui", "dentro", "dia", "depois", "meia", "meio", "que", "vem", "e"}
+_CONNECTORS = {"de", "da", "do", "a", "ao", "as", "em", "daqui", "dentro", "dia", "depois", "meia", "meio", "que", "vem", "e"}
 _VOCAB = (_DAY_WORDS | _PERIODS | _UNITS | _CONNECTORS | set(NUMBER_WORDS) | set(MONTHS))
 _LEAD_FILLER = {"uns", "umas"}
+_BEFORE_DAY = {"na", "no", "nesta", "neste", "nessa", "nesse"}  # "na sexta", "no dia 15": part of the when
 _TEXT_LEAD = {"de", "da", "do", "das", "dos", "que", "para", "pra", "a", "o", "e"}
 _TEXT_TAIL = {"em", "de", "para", "pra", "a", "as", "e", "do", "da"}
 
@@ -58,6 +59,13 @@ def _is_content(token: str) -> bool:
     )
 
 
+def _can_end(norm: list[str], k: int) -> bool:
+    """Whether a "when" phrase may end at norm[k]: also on "e meia", "que vem" and "meio dia"."""
+    token, before = norm[k], norm[k - 1] if k > 0 else ""
+    return (_is_content(token) or (token == "meia" and before == "e") or (token == "vem" and before == "que")
+            or (token == "dia" and before == "meio"))
+
+
 def _is_strong(tokens: list[str]) -> bool:
     """Enough evidence that this run of words is really a time, not just words like 'de tarde'."""
     for i, token in enumerate(tokens):
@@ -65,7 +73,11 @@ def _is_strong(tokens: list[str]) -> bool:
                 or _DATE.match(token) or token in set(MONTHS):
             return True
         following = tokens[i + 1] if i + 1 < len(tokens) else ""
-        if token == "as" and _NUMBER.match(following):
+        if token == "as" and (_NUMBER.match(following) or following in HOUR_WORDS):
+            return True
+        if (token == "meio" and following == "dia") or (token == "meia" and following == "noite") or token == "cedo":
+            return True
+        if token in {"de", "a"} and following in {"manha", "tarde", "noite"}:  # "de manhã", "à noite"
             return True
         if token == "em" and (_NUMBER.match(following) or following in NUMBER_WORDS or following == "meia"):
             return True
@@ -113,8 +125,9 @@ def _strong_runs(norm: list[str], skip: set[int]) -> list[tuple[int, int]]:
         while j < len(norm) and j not in skip and _is_vocab(norm[j]):
             j += 1
         start, end = i, j
-        while end > start and not _is_content(norm[end - 1]):
+        while end > start and not _can_end(norm, end - 1):
             end -= 1  # a phrase can not end on 'de', 'às'...
+        first = start  # strength is judged with the leading "de"/"a" still there ("de manhã", "à noite")
         while start < end:
             token = norm[start]
             following = norm[start + 1] if start + 1 < end else ""
@@ -123,7 +136,10 @@ def _strong_runs(norm: list[str], skip: set[int]) -> list[tuple[int, int]]:
                 start += 1
             else:
                 break
-        if start < end and _is_strong(norm[start:end]):
+        if start < end and _is_strong(norm[first:end]):
+            if start > 0 and start - 1 not in skip and norm[start - 1] in _BEFORE_DAY \
+                    and (_WEEKDAY.match(norm[start]) or norm[start] == "dia"):
+                start -= 1  # "na sexta que vou ao médico": the "na" belongs to the day, not to the text
             runs.append((start, end))
         i = j
     return runs

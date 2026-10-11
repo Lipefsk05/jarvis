@@ -12,11 +12,20 @@ from .when import WEEKDAY_NAMES, WEEKDAYS, Ask
 
 DAILY, WEEKDAYS_ONLY, WEEKLY = "daily", "weekdays", "weekly"
 KINDS = (DAILY, WEEKDAYS_ONLY, WEEKLY)
-_PERIODS = {"manha", "tarde", "noite", "madrugada"}
+_PERIODS = {"cedo", "manha", "tarde", "noite", "madrugada"}
 _UNSUPPORTED = Ask(
     "repeticao",
     "Por enquanto repito por dia, em dias úteis ou num dia da semana, senhor (ex.: \"todo dia às 8\", \"toda segunda às 9\"). "
     "Por mês ainda não. Como prefere?",
+)
+_ONE_WEEKDAY = Ask(
+    "repeticao",
+    "Por enquanto repito num dia da semana só, senhor. Posso marcar um lembrete para cada dia, "
+    "ou \"nos dias úteis\" se for de segunda a sexta. Como prefere?",
+)
+_NO_INTERVAL = Ask(
+    "repeticao",
+    "Repetir a cada tantas horas ainda não existe, senhor. Repito por dia, em dias úteis ou num dia da semana. Como prefere?",
 )
 _NEEDS_WEEKDAY = Ask("repeticao", "Em que dia da semana, senhor? Por exemplo: \"toda segunda às 9\".")
 _WEEKDAY_WORD = re.compile(rf"^({'|'.join(WEEKDAYS)})s?(?:-feiras?)?$")
@@ -71,6 +80,8 @@ def extract(raw: str) -> Extraction:
         if word == "de" and nxt == "segunda" and third == "a" and fourth in {"sexta", "sexta-feira"} and repeat is None:
             repeat, i = WEEKDAYS_ONLY, i + 4
             continue
+        if (word == "a" and nxt == "cada") or (word == "de" and third == "em" and nxt == fourth and nxt):
+            return Extraction(raw, None, _NO_INTERVAL)  # "a cada 2 horas", "de 2 em 2 horas"
         if word == "diariamente" and repeat is None:
             repeat, i = DAILY, i + 1
             continue
@@ -83,6 +94,10 @@ def extract(raw: str) -> Extraction:
             skip = 1 + (nxt in {"os", "as"})
             following = n[i + skip] if i + skip < len(n) else ""
             if _weekday(following):  # "toda segunda", "todas as sextas", "todo sábado"
+                more = n[i + skip + 1] if i + skip + 1 < len(n) else ""
+                after_and = n[i + skip + 2] if i + skip + 2 < len(n) else ""
+                if _weekday(more) or (more == "e" and _weekday(after_and)):  # "toda segunda e quarta"
+                    return Extraction(raw, None, _ONE_WEEKDAY)
                 repeat = WEEKLY
                 out.append(_weekday(following))
                 i += skip + 1

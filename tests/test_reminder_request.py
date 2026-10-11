@@ -45,8 +45,12 @@ class SplitTest(unittest.TestCase):
     def test_words_that_look_like_time_but_are_not(self):
         text, phrase, _ = split_request("comprar 2 pães e chegar tarde em casa")
         self.assertEqual(phrase, "")  # no day, no hour: not a time
-        text, phrase, _ = split_request("bom dia para a Ana, ligar de tarde")
+        text, phrase, _ = split_request("ligar pra Ana tarde da noite")  # "tarde" without "de"/"a" is not a part of the day
         self.assertEqual(phrase, "")
+
+    def test_part_of_the_day_alone_is_a_time_inside_a_reminder_request(self):
+        text, phrase, _ = split_request("ligar pra Ana de tarde")  # the user asked to be reminded, so "de tarde" is the when
+        self.assertEqual((text, phrase), ("ligar pra Ana", "tarde"))
 
     def test_lead_forms(self):
         self.check("amanhã às 9 consulta, 10 min antes", "consulta", ["amanha"], 10)
