@@ -71,23 +71,30 @@ Batimento por minuto e registro da lacuna; mensagens do Telegram ficam guardadas
 4. **Proatividade** com escalonamento de avisos.
 5. **App próprio** (Flutter ou PWA), widget, voz em tempo real fora de casa; depois ligação e outros canais.
 
-## Estado da implementação (2026-10-08)
+## Estado da implementação (2026-10-12)
 
-Fase 1 (núcleo + Telegram) funcionando, 96 testes. Módulos em `src/jarvis/`:
+Fase 1 (núcleo + Telegram) funcionando, 459 testes, rodando no notebook de casa vigiado pela bandeja do Windows (`tray/`). Ainda sem Trabalhador, e-mail, agenda, resposta em voz nem política de contexto completa. Módulos em `src/jarvis/`:
 
 | Módulo | O quê |
 |---|---|
 | `config.py` | Configuração por `.env` e ambiente, validação na partida (diz o nome do que falta, nunca o valor) |
-| `bot.py` | Telegram: allowlist de IDs, comandos, botão "essa não deu", aviso quando um provedor reserva responde; nunca loga conteúdo nem token |
-| `assistant.py` | Um turno: teto de gasto, trava de humor, persona, modelo, histórico; desembrulha a piada de `[[humor: ...]]` |
-| `humor.py` | Trava de humor: erro, urgência, dinheiro, pedido de explicação, CAPS e pressa; intervalo que só reinicia com piada real |
-| `style.py` | Dicas de estilo sorteadas (cumprimentos e agradecimentos) pra forçar variedade e evitar construções arcaicas |
+| `bot.py` | Telegram: allowlist de IDs, comandos, áudio, botão "essa não deu", tratador de erro, reconexão na partida; nunca loga conteúdo nem token |
+| `assistant.py` | Um turno: teto de gasto, trava de humor, persona, modelo, histórico, trava de ação (`has_intent`); desembrulha a piada de `[[humor: ...]]` |
+| `actions.py`, `commands.py`, `help.py` | Ferramentas que o modelo nomeia (o código valida e responde), atalhos sem modelo e a lista única de comandos |
+| `humor.py`, `style.py`, `tone.py` | Trava de humor, dicas de estilo sorteadas e limpeza do texto do modelo (markdown, aberturas e ofertas de ajuda) |
 | `persona.py` + `persona/jarvis.md` | Prompt do Falador e seus marcadores de contexto |
-| `budget.py` | Contador e teto diário em JSON; custo por provedor |
-| `mind.py`, `commands.py`, `inbox.py` | Vault: tarefas pendentes (somente leitura) e notas no inbox (único lugar onde escreve) |
-| `talker/` | Provedores (`anthropic`, `gemini`, `groq`) e `chain.py`, que tenta um depois do outro |
+| `budget.py`, `usage.py` | Contador e teto diário em JSON, custo por provedor, tela `/uso` |
+| `conversation.py` | Histórico da conversa em disco (`state/conversa.json`), com trava |
+| `mind.py`, `inbox.py`, `telegram_format.py` | Vault: tarefas pendentes (somente leitura) e notas no inbox (único lugar onde escreve) |
+| `audio.py` | Transcrição de áudio do Telegram (Whisper do Groq, com prompt de vocabulário) |
+| `when.py`, `repeat.py`, `reminder_request.py` | Datas em português (conjunto fechado: pergunta em vez de adivinhar), repetição e extração de quando/o quê/duração |
+| `reminders.py`, `reminder_flow.py`, `conflicts.py`, `reminder_text.py` | Armazém (`state/lembretes.json`), conversa de pergunta e resposta, conflito entre lembretes e texto de entrega |
+| `scheduler.py`, `outbox.py`, `heartbeat.py` | Agendador de 30 s, caixa de saída com roteador de canal (só Telegram por ora), batimento de 1 min e aviso de lacuna |
+| `talker/` | Provedores (`anthropic`, `gemini`, `groq`) e `chain.py`, a cadeia com **disjuntor** (provedor que falhou descansa: 429 60 s, chave ruim 10 min, queda ou timeout 2 min). Contexto privado (títulos de tarefas) **nunca** vai pro Gemini grátis (`private_ok`). Timeout por provedor em `JARVIS_TALKER_TIMEOUT_S` |
 
-Pendente: ver a lista no board de tarefas do dono (robustez, lembretes, áudio, política de contexto, agenda e e-mail, Trabalhador, voz).
+Princípio que atravessa tudo: **o modelo só nomeia a ação, o código decide e responde**. Horário de lembrete vem das palavras do usuário lidas pelo código, ação que muda coisa só executa se o usuário pediu, e o que não é entendido vira pergunta, nunca palpite.
+
+Pendente: ver a lista no board de tarefas do dono (prompt mais leve, política de contexto, agenda e e-mail, Trabalhador, voz). O `state/estado_atual.md` que o prompt reserva espaço ainda não é escrito por nada; decidir junto com a política de contexto.
 
 ## Em aberto
 
