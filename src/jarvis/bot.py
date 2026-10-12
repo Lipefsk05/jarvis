@@ -32,8 +32,8 @@ from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminder_request import plan_parts, plan_reminder
-from .reminder_text import confirmation, listing
+from .reminder_request import PlannedSeries, plan_parts, plan_reminder
+from .reminder_text import confirmation, listing, series_confirmation
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
 from .telegram_format import format_items, format_summary, safe
@@ -218,12 +218,31 @@ def build_application(settings: Settings) -> Application:
         if isinstance(planned, Ask):
             await message.reply_text(planned.question)
             return
+        if isinstance(planned, PlannedSeries):
+            await store_series(message, chat_id, planned)
+            return
         try:
             reminder = reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat)
         except ReminderError as exc:
             await message.reply_text(str(exc))
             return
         text = confirmation(reminder, now, planned.hour_assumed)
+        await message.reply_text(text)
+        assistant.remember(chat_id, text)
+
+    async def store_series(message, chat_id: int, series: PlannedSeries) -> None:
+        """"Toda segunda e quarta": one weekly reminder per day, one confirmation."""
+        now = clock()
+        stored = []
+        try:
+            for planned in series.items:
+                stored.append(reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat))
+        except ReminderError as exc:
+            for reminder in stored:  # all or nothing: do not leave half of the days marked
+                reminders.cancel(reminder.id, now)
+            await message.reply_text(str(exc))
+            return
+        text = series_confirmation(stored, now, any(p.hour_assumed for p in series.items))
         await message.reply_text(text)
         assistant.remember(chat_id, text)
 

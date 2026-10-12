@@ -117,6 +117,21 @@ def confirmation(reminder: Reminder, now: datetime, hour_assumed: bool = False) 
     return text
 
 
+def series_confirmation(reminders: list[Reminder], now: datetime, hour_assumed: bool = False) -> str:
+    """One message for "toda segunda e quarta às 7": every reminder created, with its own number."""
+    numbers = ", ".join(str(r.id) for r in reminders[:-1]) + f" e {reminders[-1].id}"
+    if any(r.event for r in reminders):  # with advance warning each day reads differently: list them one by one
+        return "\n".join(confirmation(r, now, False) for r in reminders) + (
+            f"\nNão disse a hora, então assumi {reminders[0].due:%H:%M}." if hour_assumed else ""
+        )
+    days = " e ".join(label(r.repeat, r.due) for r in reminders)
+    text = f"Marcado, senhor (lembretes {numbers}): {days} às {reminders[0].due:%H:%M}, {_body(reminders[0].text)}."
+    if hour_assumed:
+        text += (f" Não disse a hora, então assumi {reminders[0].due:%H:%M}; se preferir outra, "
+                 f"cancele com /cancela {reminders[0].id} e /cancela {reminders[-1].id} e marque de novo.")
+    return text
+
+
 def listing(items: list[Reminder], now: datetime) -> str:
     from .when import describe
 

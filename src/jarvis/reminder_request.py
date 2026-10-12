@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from .when import HOUR_WORDS, MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
 from .reminder_text import human_minutes
-from .repeat import align_first, extract
+from .repeat import WEEKLY, align_first, extract
 
 MAX_LEAD_MINUTES = 24 * 60
 
@@ -37,6 +37,12 @@ class Planned:
     lead_minutes: int
     hour_assumed: bool
     repeat: str | None = None  # "daily" | "weekdays" | "weekly"
+
+
+@dataclass(frozen=True)
+class PlannedSeries:
+    """"Toda segunda e quarta às 7": one weekly reminder per day, stored together and confirmed in one message."""
+    items: tuple[Planned, ...]
 
 
 def _norm(token: str) -> str:
@@ -179,13 +185,15 @@ def _only_when(side: str) -> bool:
 
 
 def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: int | None = None,
-               repeat: str | None = None) -> Planned | Ask:
+               repeat: str | None = None) -> Planned | PlannedSeries | Ask:
     """Plan a reminder whose pieces are already separated (what, when in words, minutes of advance).
     A repeat can come in `repeat` or inside `phrase` ("todo dia às 9")."""
     if repeat is None:
         found = extract(phrase)
         if found.ask:
             return found.ask
+        if found.days:
+            return _per_day(found.days, lambda day: (text, f"{day} {found.rest}", lead), now, default_hour)
         phrase, repeat = found.rest, found.repeat
     if not text.strip():
         return Ask("texto", "O que devo lembrar, senhor?")
@@ -204,11 +212,27 @@ def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: i
     return Planned(text.strip(), due, anchor if lead else None, lead, when.hour_assumed, repeat)
 
 
-def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> Planned | Ask:
+def _per_day(days: tuple[str, ...], pieces, now: datetime, default_hour: int | None) -> PlannedSeries | Ask:
+    """One weekly reminder per weekday. `pieces(day)` gives (text, when phrase, lead minutes) for that day."""
+    items = []
+    for day in days:
+        text, phrase, lead = pieces(day)
+        if not phrase:
+            return parse("", now)  # the standard "para quando devo marcar?" question
+        planned = plan_parts(text, phrase, lead, now, default_hour, WEEKLY)
+        if isinstance(planned, Ask):
+            return planned
+        items.append(planned)
+    return PlannedSeries(tuple(items))
+
+
+def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> Planned | PlannedSeries | Ask:
     """Plan a reminder from one free sentence (the /lembra command and "me lembra ...")."""
     found = extract(raw)
     if found.ask:
         return found.ask
+    if found.days:
+        return _per_day(found.days, lambda day: split_request(f"{day} {found.rest}"), now, default_hour)
     text, phrase, lead = split_request(found.rest)
     if not phrase:
         return parse("", now)  # the standard "para quando devo marcar?" question

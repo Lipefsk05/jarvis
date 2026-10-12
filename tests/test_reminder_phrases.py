@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from jarvis.commands import parse_reminder_request
-from jarvis.reminder_request import Planned, plan_reminder
+from jarvis.reminder_request import Planned, PlannedSeries, plan_reminder
 from jarvis.when import Ask
 
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -33,13 +33,19 @@ PLANNED = {
 }
 # sentence -> the kind of question the code must ask instead of guessing
 ASKED = {
-    "me lembra toda segunda e quarta às 7 de treinar": "repeticao",
-    "Pode me lembrar toda segunda e quarta de manhã, às sete da manhã, treinar?": "repeticao",
-    "me lembra todo sábado e domingo às 10 de correr": "repeticao",
     "me lembra de a cada 2 horas beber água": "repeticao",
     "me lembra de 2 em 2 horas de beber água": "repeticao",
     "me lembra todo mês dia 5 de pagar o cartão": "repeticao",
     "me lembra semana que vem de ligar pro Matheus": "entendi",
+}
+
+
+# sentence -> (text, [(day, month, hour, minute), ...]): one weekly reminder per weekday
+SERIES = {
+    "me lembra toda segunda e quarta às 7 de treinar": ("treinar", [(12, 10, 7, 0), (14, 10, 7, 0)]),
+    "Pode me lembrar toda segunda e quarta de manhã, às sete da manhã, treinar?": ("treinar", [(12, 10, 7, 0), (14, 10, 7, 0)]),
+    "me lembra todo sábado e domingo às 10 de correr": ("correr", [(17, 10, 10, 0), (18, 10, 10, 0)]),
+    "me lembra toda segunda, quarta e sexta às 18h de estudar": ("estudar", [(12, 10, 18, 0), (14, 10, 18, 0), (16, 10, 18, 0)]),
 }
 
 
@@ -59,6 +65,14 @@ class PhraseCorpusTest(unittest.TestCase):
                 self.assertEqual((got.due.day, got.due.month, got.due.hour, got.due.minute), (day, month, hour, minute))
                 self.assertEqual(got.repeat, repeat)
 
+    def test_several_weekdays_make_one_weekly_reminder_each(self):
+        for sentence, (text, days) in SERIES.items():
+            with self.subTest(sentence):
+                got = plan(sentence)
+                self.assertIsInstance(got, PlannedSeries, got)
+                self.assertEqual([(i.due.day, i.due.month, i.due.hour, i.due.minute) for i in got.items], days)
+                self.assertTrue(all(i.text == text and i.repeat == "weekly" for i in got.items))
+
     def test_asks_instead_of_guessing(self):
         for sentence, kind in ASKED.items():
             with self.subTest(sentence):
@@ -73,3 +87,18 @@ class PhraseCorpusTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeriesConfirmationTest(unittest.TestCase):
+    def test_one_message_lists_every_number_and_day(self):
+        from jarvis.reminder_text import series_confirmation
+        from jarvis.reminders import Reminder, PENDING
+
+        mon, wed = datetime(2026, 10, 12, 7, 0, tzinfo=TZ), datetime(2026, 10, 14, 7, 0, tzinfo=TZ)
+        items = [Reminder(19, "treinar", mon, PENDING, NOW, repeat="weekly"),
+                 Reminder(20, "treinar", wed, PENDING, NOW, repeat="weekly")]
+        text = series_confirmation(items, NOW)
+        self.assertIn("lembretes 19 e 20", text)
+        self.assertIn("toda segunda-feira e toda quarta-feira às 07:00", text)
+        self.assertNotIn("assumi", text)
+        self.assertIn("assumi 07:00", series_confirmation(items, NOW, hour_assumed=True))

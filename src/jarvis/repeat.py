@@ -18,11 +18,6 @@ _UNSUPPORTED = Ask(
     "Por enquanto repito por dia, em dias úteis ou num dia da semana, senhor (ex.: \"todo dia às 8\", \"toda segunda às 9\"). "
     "Por mês ainda não. Como prefere?",
 )
-_ONE_WEEKDAY = Ask(
-    "repeticao",
-    "Por enquanto repito num dia da semana só, senhor. Posso marcar um lembrete para cada dia, "
-    "ou \"nos dias úteis\" se for de segunda a sexta. Como prefere?",
-)
 _NO_INTERVAL = Ask(
     "repeticao",
     "Repetir a cada tantas horas ainda não existe, senhor. Repito por dia, em dias úteis ou num dia da semana. Como prefere?",
@@ -37,6 +32,7 @@ class Extraction:
     rest: str                 # the request without the repeat words (a weekday name stays, it is the first date)
     repeat: str | None
     ask: Ask | None = None
+    days: tuple[str, ...] = ()  # "toda segunda e quarta": the weekdays (rest has none; one reminder is made per day)
 
 
 def _n(token: str) -> str:
@@ -56,6 +52,7 @@ def extract(raw: str) -> Extraction:
     n = [_n(t) for t in tokens]
     repeat: str | None = None
     weekly_any = False
+    many: list[str] = []
     i = 0
     out: list[str] = []
     while i < len(tokens):
@@ -94,13 +91,22 @@ def extract(raw: str) -> Extraction:
             skip = 1 + (nxt in {"os", "as"})
             following = n[i + skip] if i + skip < len(n) else ""
             if _weekday(following):  # "toda segunda", "todas as sextas", "todo sábado"
-                more = n[i + skip + 1] if i + skip + 1 < len(n) else ""
-                after_and = n[i + skip + 2] if i + skip + 2 < len(n) else ""
-                if _weekday(more) or (more == "e" and _weekday(after_and)):  # "toda segunda e quarta"
-                    return Extraction(raw, None, _ONE_WEEKDAY)
+                days, k = [_weekday(following)], i + skip + 1
+                while k < len(n):  # "toda segunda e quarta", "todo sábado, domingo"
+                    if n[k] == "e" and k + 1 < len(n) and _weekday(n[k + 1]):
+                        days.append(_weekday(n[k + 1]))
+                        k += 2
+                    elif _weekday(n[k]):
+                        days.append(_weekday(n[k]))
+                        k += 1
+                    else:
+                        break
                 repeat = WEEKLY
-                out.append(_weekday(following))
-                i += skip + 1
+                if len(days) > 1:
+                    many, i = days, k
+                    continue
+                out.append(days[0])
+                i = k
                 continue
             if following in _PERIODS:  # "toda noite às 9": every day, the period word stays to place the hour
                 repeat = DAILY
@@ -120,7 +126,7 @@ def extract(raw: str) -> Extraction:
         if not any(names):
             return Extraction(raw, None, _NEEDS_WEEKDAY)
         out = _drop_prepositions_before_weekday(out)
-    return Extraction(" ".join(out), repeat)
+    return Extraction(" ".join(out), repeat, days=tuple(many))
 
 
 def _drop_prepositions_before_weekday(tokens: list[str]) -> list[str]:
