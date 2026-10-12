@@ -23,7 +23,7 @@ _NUMBER = re.compile(r"^\d{1,6}$")
 _DAY_WORDS = {"hoje", "amanha", "meio-dia", "meia-noite"}
 _PERIODS = {"cedo", "manha", "tarde", "noite", "madrugada"}
 _UNITS = {"min", "minuto", "minutos", "hora", "horas", "h", "dia", "dias", "semana", "semanas"}
-_CONNECTORS = {"de", "da", "do", "a", "ao", "as", "das", "mes", "meses", "ano", "anos", "natal", "ontem", "anteontem", "fds", "fim", "carnaval", "pascoa", "reveillon", "proximo", "proxima", "seguinte", "feira", "mais", "primeiro", "em", "daqui", "dentro", "dia", "depois", "meia", "meio", "que", "vem", "e"}
+_CONNECTORS = {"de", "da", "do", "a", "ao", "as", "das", "mes", "meses", "ano", "anos", "natal", "ontem", "anteontem", "fds", "fim", "carnaval", "pascoa", "reveillon", "proximo", "proxima", "seguinte", "mais", "primeiro", "em", "daqui", "dentro", "dia", "depois", "meia", "meio", "que", "vem", "e"}
 _VOCAB = (_DAY_WORDS | _PERIODS | _UNITS | _CONNECTORS | set(NUMBER_WORDS) | set(MONTHS))
 _LEAD_FILLER = {"uns", "umas"}
 _BEFORE_DAY = {"na", "no", "nesta", "neste", "nessa", "nesse"}  # "na sexta", "no dia 15": part of the when
@@ -155,7 +155,7 @@ def _strong_runs(norm: list[str], skip: set[int]) -> list[tuple[int, int]]:
             i += 1
             continue
         j = i
-        while j < len(norm) and j not in skip and _is_vocab(norm[j]):
+        while j < len(norm) and j not in skip and (_is_vocab(norm[j]) or (norm[j] == "feira" and j > i and _WEEKDAY.match(norm[j - 1]))):
             j += 1
         start, end = i, j
         while end > start and not _can_end(norm, end - 1):
@@ -165,7 +165,7 @@ def _strong_runs(norm: list[str], skip: set[int]) -> list[tuple[int, int]]:
             token = norm[start]
             following = norm[start + 1] if start + 1 < end else ""
             keep_em = token == "em" and (_NUMBER.match(following) or following in NUMBER_WORDS or following == "meia")
-            if token in {"de", "da", "do", "que", "e", "vem", "mais", "proximo", "proxima"} or (token == "a") or (token == "em" and not keep_em):
+            if token in {"de", "da", "do", "que", "e", "vem", "mais", "proximo", "proxima", "primeiro"} or (token == "a") or (token == "em" and not keep_em):
                 start += 1
             elif _NUMBER.match(token) and (following in _DAY_WORDS or _WEEKDAY.match(following) or following in {"as", "dia", "daqui", "em", "depois"}):
                 start += 1  # "ligar pro 190 amanhã": the 190 belongs to the text
@@ -189,9 +189,24 @@ def _has_exact_time(tokens: list[str]) -> bool:
 
 
 def _time_count(tokens: list[str]) -> int:
-    """How many exact hours the tokens name ("às 9 e às 15" -> 2)."""
+    """How many exact hours (or "daqui a ...") the tokens name ("às 9 e às 15" -> 2)."""
     return sum(1 for k, t in enumerate(tokens)
-               if _TIME.match(t) or (t in {"as", "das"} and k + 1 < len(tokens) and (_NUMBER.match(tokens[k + 1]) or tokens[k + 1] in HOUR_WORDS)))
+               if _TIME.match(t)
+               or (t in {"as", "das"} and k + 1 < len(tokens) and (_NUMBER.match(tokens[k + 1]) or tokens[k + 1] in HOUR_WORDS)))
+
+
+def _day_count(tokens: list[str]) -> int:
+    """How many different days the tokens name ("sábado e domingo", "hoje e amanhã", "dia 20 e dia 21")."""
+    count = 0
+    for k, t in enumerate(tokens):
+        nxt = tokens[k + 1] if k + 1 < len(tokens) else ""
+        if t in {"hoje", "amanha"} or _WEEKDAY.match(t) or _DATE.match(t) or t in set(MONTHS):
+            count += 1
+        elif t == "dia" and (_NUMBER.match(nxt) or nxt == "primeiro" or _ORDINAL.match(nxt)):
+            after = tokens[k + 2:k + 4]
+            if not (after[:1] == ["de"] and after[1:2] and after[1] in set(MONTHS)):  # "dia 20 de novembro": the month counts it
+                count += 1
+    return count
 
 
 def has_many_times(raw: str) -> bool:
@@ -201,20 +216,35 @@ def has_many_times(raw: str) -> bool:
     _, lead_idx = _take_lead(norm)
     runs = _strong_runs(norm, lead_idx)
     spoken = [norm[k] for start, end in runs for k in range(start, end)]
-    if _time_count(spoken) >= 2:
+    if _time_count(spoken) >= 2 or _day_count(spoken) >= 2 or spoken.count("daqui") >= 2:
         return True
     return any(end < len(norm) - 1 and norm[end] == "ou" and (_NUMBER.match(norm[end + 1]) or _TIME.match(norm[end + 1])
                                                                 or norm[end + 1] in HOUR_WORDS) for _, end in runs)
 
 
-MANY_TIMES = Ask("varios", "Vejo mais de um horário nessa frase, senhor. Pode pedir um lembrete de cada vez?")
+MANY_TIMES = Ask(
+    "varios",
+    "Vejo mais de um dia ou horário nessa frase, senhor. Pode me pedir um de cada vez? Para repetir, diga \"toda segunda e quarta\".",
+)
 
 
 def _clean_text(tokens: list[str]) -> str:
-    while tokens and _norm(tokens[0]) in _TEXT_LEAD:
-        tokens = tokens[1:]
-    while tokens and _norm(tokens[-1]) in _TEXT_TAIL:
-        tokens = tokens[:-1]
+    while tokens:
+        if _norm(tokens[0]) in _TEXT_LEAD:
+            tokens = tokens[1:]
+        elif len(tokens) > 1 and (_norm(tokens[0]), _norm(tokens[1])) == ("por", "favor"):
+            tokens = tokens[2:]
+        elif _norm(tokens[0]) in {"pfv", "pf"}:
+            tokens = tokens[1:]
+        else:
+            break
+    while tokens:
+        if _norm(tokens[-1]) in _TEXT_TAIL | {"pfv", "pf"}:
+            tokens = tokens[:-1]
+        elif len(tokens) > 1 and (_norm(tokens[-2]), _norm(tokens[-1])) == ("por", "favor"):
+            tokens = tokens[:-2]
+        else:
+            break
     return " ".join(tokens).strip(" ,;:-?!.")  # a transcribed question mark is not part of the text
 
 
@@ -223,7 +253,7 @@ def split_request(raw: str) -> tuple[str, str, int]:
     if "|" in raw:  # explicit "quando | o quê" (either order) beats any guessing
         left, _, right = raw.partition("|")
         for when_side, text_side in ((left, right), (right, left)):
-            if _only_when(when_side):
+            if is_only_when(when_side):
                 _, phrase, lead = split_request(when_side)
                 if phrase:
                     return _clean_text(text_side.split()), phrase, lead
@@ -239,7 +269,7 @@ def split_request(raw: str) -> tuple[str, str, int]:
     return _clean_text(rest), phrase, lead
 
 
-def _only_when(side: str) -> bool:
+def is_only_when(side: str) -> bool:
     """True when the whole side is made of "when" words (so it can be the left of 'quando | texto')."""
     norm = [_norm(t) for t in side.split()]
     return bool(norm) and all(_is_vocab(t) or t in {"antes", "uns", "umas"} for t in norm)
@@ -322,6 +352,8 @@ def plan_from_words(user_text: str, model_text: str, model_when: str, lead: int,
     own words when they hold a time, because the model drops details ("terças e quintas" -> "terça", "duas da
     tarde" -> nothing). Only when the user's words hold no time does the model's `quando` count."""
     planned = plan_reminder(user_text, now, default_hour, ask_repeat=False)
+    if isinstance(planned, Ask) and planned.kind == "texto":  # the user's words have a time and no text: the text is the model's
+        planned = plan_reminder(f"{model_text} {user_text}", now, default_hour, ask_repeat=False)
     if isinstance(planned, Ask):
         if planned.kind in {"entendi", "texto"}:  # no time found in what the user wrote
             return plan_parts(model_text, model_when, lead, now, default_hour, ask_repeat=ask_repeat)

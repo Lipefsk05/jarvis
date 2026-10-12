@@ -82,6 +82,9 @@ def _relative(text: str, now: datetime) -> When | Ask | None:
     glued = re.search(r"\b(?:daqui a|daqui|em|dentro de) (\d{1,2})h(\d{2})\b", text)  # "daqui a 1h30"
     if glued and 0 < int(glued.group(1)) * 60 + int(glued.group(2)):
         return When((now + timedelta(hours=int(glued.group(1)), minutes=int(glued.group(2)))).replace(second=0, microsecond=0))
+    hm = re.search(r"\b(?:daqui a|daqui|em|dentro de) (\d+) horas? e (\d{1,2}) ?(?:minutos?|min)\b", text)  # "2 horas e 30 minutos"
+    if hm and 0 < int(hm.group(2)) < 60 and 0 < int(hm.group(1)) <= 24 * 31:
+        return When((now + timedelta(hours=int(hm.group(1)), minutes=int(hm.group(2)))).replace(second=0, microsecond=0))
     half = re.search(
         r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+)|(um|uma|duas|dois|tres|quatro|cinco)) horas? e "
         r"(meia|quinze|quarenta e cinco)\b", text,
@@ -90,7 +93,7 @@ def _relative(text: str, now: datetime) -> When | Ask | None:
         hours = int(half.group(1)) if half.group(1) else NUMBER_WORDS[half.group(2)]
         if 1 <= hours <= 24 * 31:
             return When((now + timedelta(hours=hours, minutes=FRACTIONS[half.group(3)])).replace(second=0, microsecond=0))
-    match = re.search(r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+) ?|([a-z]+) )(minutos?|min|horas?|h|dias?|semanas?)\b", text)
+    match = re.search(r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+) ?|([a-z]+) )(minutos?|min|horas?|h)\b", text)
     if not match:
         return None
     amount = int(match.group(1)) if match.group(1) else NUMBER_WORDS.get(match.group(2))
@@ -99,11 +102,25 @@ def _relative(text: str, now: datetime) -> When | Ask | None:
     unit = {"min": "minuto", "h": "hora"}.get(match.group(3), match.group(3).rstrip("s"))
     if amount < 1 or amount > MAX_AMOUNT[unit]:
         return Ask("invalido", "Esse prazo me parece fora de proporção, senhor. Pode repetir?")
-    delta = {
-        "minuto": timedelta(minutes=amount), "hora": timedelta(hours=amount),
-        "dia": timedelta(days=amount), "semana": timedelta(weeks=amount),
-    }[unit]
+    delta = {"minuto": timedelta(minutes=amount), "hora": timedelta(hours=amount)}[unit]
     return When((now + delta).replace(second=0, microsecond=0))
+
+
+def _relative_days(text: str, now: datetime) -> tuple[datetime, str] | Ask | None:
+    """"daqui a 3 dias", "em 2 semanas": a date, with the hour still to be said ("às 9") or asked. Returns (date, rest)."""
+    text = _compound_numbers(text)
+    match = re.search(r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+) ?|([a-z]+) )(dias?|semanas?)\b", text)
+    if not match:
+        return None
+    amount = int(match.group(1)) if match.group(1) else NUMBER_WORDS.get(match.group(2))
+    if amount is None:
+        return None
+    unit = match.group(3).rstrip("s")
+    if amount < 1 or amount > MAX_AMOUNT[unit]:
+        return Ask("invalido", "Esse prazo me parece fora de proporção, senhor. Pode repetir?")
+    days = amount * (7 if unit == "semana" else 1)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return today + timedelta(days=days), _strip(text, match)
 
 
 def _iso(text: str, now: datetime) -> When | Ask | None:
@@ -225,7 +242,7 @@ def _find_time(text: str) -> tuple[tuple[int, int] | None, bool, Ask | None]:
     frac = r"(?: e (?P<f>meia|quinze|quarenta e cinco))?"
     for pattern in (
         r"\b(?P<h>\d{1,2}):(?P<m>\d{2})(?:h|hs|hrs)?\b",
-        r"\b(?P<h>\d{1,2})\s*(?:h|hr|hrs|horas?)\s*(?P<m>\d{2})?\b",
+        r"\b(?P<h>\d{1,2})\s*(?:h|hr|hrs|horas?)(?: e)?\s*(?P<m>\d{2})?(?: ?min\w*)?\b",
         rf"\b(?P<h>\d{{1,2}}|{words}){frac} (?:da|de) (?:manha|tarde|noite|madrugada)\b",
         rf"\bas (?P<h>\d{{1,2}}|{words}){frac}\b",
     ):
@@ -278,7 +295,14 @@ def parse(text: str, now: datetime, default_hour: int | None = None) -> When | A
         if found is not None:
             return found
 
-    date, rest, kind, error = _find_date(text, now)
+    relative = _relative_days(text, now)
+    if isinstance(relative, Ask):
+        return relative
+    if relative is not None:
+        date, rest = relative
+        kind, error = None, None
+    else:
+        date, rest, kind, error = _find_date(text, now)
     if error:
         return error
     today = now.replace(hour=0, minute=0)

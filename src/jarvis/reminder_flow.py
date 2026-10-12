@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from .commands import is_yes, parse_reminder_request
 from .reminder_request import (
-    REPEAT_QUESTION, Planned, PlannedSeries, is_schedule, plan_from_words, plan_reminder, split_request,
+    REPEAT_QUESTION, Planned, PlannedSeries, is_only_when, is_schedule, plan_from_words, plan_reminder, split_request,
 )
 from .repeat import WEEKLY, extract
 from .textutil import fold
@@ -35,7 +35,7 @@ _DAY_WORDS = re.compile(r"\b(?:depois de amanh[ãa]|amanh[ãa]|hoje)\b", re.IGNO
 _BARE_HOUR = re.compile(
     rf"^(?:(?:as|a|pode ser|umas?|por volta das?) )?(?P<h>\d{{1,2}}|{'|'.join(HOUR_WORDS)})"
     r"(?:(?::| ?h) ?(?P<m>\d{2})?|(?: e (?P<f>meia|quinze|quarenta e cinco)))?"
-    r"(?P<rest>(?: (?:da|de|na|no) \w+)?)$"
+    r"(?: horas?)?(?P<rest>(?: (?:da|de|na|no) \w+)?)$"
 )
 
 
@@ -114,12 +114,15 @@ class ReminderFlow:
         if _CANCEL.match(folded):
             return Dropped(CANCELLED)
         message = strip_filler(message)
+        if draft.kind in {"hora", "ampm", "passou", "entendi"} and not is_only_when(message):
+            return None  # a time was asked: anything with other words in it is a new message, not the answer
         if draft.kind == "passou":  # the new time replaces the one that already went by; keep only what to remember
             base = "" if draft.text is not None else split_request(extract(draft.raw).rest)[0]
             merged = replace(draft, raw=f"{base} {message}".strip())
         else:
             reply = hour_answer(message) if draft.kind in {"hora", "ampm"} else message
-            merged = replace(draft, raw=f"{draft.raw} {reply}")
+            raw = _DAY_WORDS.sub(" ", draft.raw) if draft.kind == "dia_semana" else draft.raw  # the weekday decides the day
+            merged = replace(draft, raw=f"{raw} {reply}")
         result = self._plan(merged, now)
         if isinstance(result, Ask) and result.kind == draft.kind:  # the same question again: it did not answer it
             return None

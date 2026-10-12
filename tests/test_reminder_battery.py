@@ -87,7 +87,10 @@ class ExactTimeTest(unittest.TestCase):
         "daqui a meia hora": (10, 12, 10, 30), "daqui a uma hora": (10, 12, 11, 0), "em 1 hora": (10, 12, 11, 0),
         "em 1 hora e meia": (10, 12, 11, 30), "em uma hora e meia": (10, 12, 11, 30),
         "daqui a duas horas e meia": (10, 12, 12, 30), "daqui a 1h": (10, 12, 11, 0),
-        "daqui a 3 dias": (10, 15, 10, 0), "daqui a 2 semanas": (10, 26, 10, 0), "em 10 minutos": (10, 12, 10, 10),
+        "daqui a 3 dias às 9": (10, 15, 9, 0), "daqui a 2 semanas às 15": (10, 26, 15, 0), "em 10 minutos": (10, 12, 10, 10),
+        "em 3 dias às 8 da manhã": (10, 15, 8, 0), "daqui a 2 horas e 30 minutos": (10, 12, 12, 30),
+        "daqui a 1 hora e 15 minutos": (10, 12, 11, 15), "daqui a 1h30": (10, 12, 11, 30),
+        "daqui a vinte e cinco minutos": (10, 12, 10, 25), "em quarenta e cinco minutos": (10, 12, 10, 45),
     }
 
     def test_every_case_in_every_shape(self):
@@ -140,7 +143,7 @@ class ExactTimeTest(unittest.TestCase):
 class AskTheHourTest(unittest.TestCase):
     """No hour, or a part of the day only, or a doubtful hour: the bot asks and never assumes."""
 
-    NO_HOUR = ["amanhã", "hoje", "depois de amanhã", "sexta", "sexta-feira", "sábado", "domingo", "segunda que vem",
+    NO_HOUR = ["daqui a 3 dias", "daqui a 2 semanas", "em 3 dias", "amanhã", "hoje", "depois de amanhã", "sexta", "sexta-feira", "sábado", "domingo", "segunda que vem",
                "dia 20", "dia 20 de novembro", "20/11", "20/10/2026", "na terça", "quinta"]
     PERIOD_ONLY = {
         "amanhã de manhã": "manhã", "amanhã de tarde": "tarde", "amanhã à tarde": "tarde", "hoje à noite": "noite",
@@ -414,6 +417,20 @@ class FlowTest(unittest.TestCase):
                 self.assertIsNone(results[1])
                 self.assertFalse(flow.pending(1))  # and it does not keep waiting for a late answer
 
+    def test_other_words_are_not_an_answer_to_a_time_question(self):
+        for message in ("amanhã às 10 ligar pro Pedro", "ligar pro Pedro", "às 10 mas só se não chover", "quero 8 pessoas"):
+            with self.subTest(message):
+                results, flow = self.talk("ligar pro joão amanhã", message)
+                self.assertIsNone(results[1])
+                self.assertFalse(flow.pending(1))
+
+    def test_spelled_out_hours_with_the_word_hours(self):
+        for answer, hour in (("oito horas", 8), ("às oito horas", 8), ("Oito.", 8), ("Às oito e meia.", 8), ("umas 8", 8)):
+            with self.subTest(answer):
+                results, _ = self.talk("buscar o bolo amanhã", answer)
+                self.assertIsInstance(results[1], Planned, results[1])
+                self.assertEqual(results[1].due.hour, hour)
+
     def test_a_new_request_replaces_the_old_one(self):
         flow = ReminderFlow()
         flow.start(1, "ligar pro joão amanhã", NOW)
@@ -540,6 +557,13 @@ class ModelPathTest(unittest.TestCase):
         self.assertIsInstance(got, Planned)
         self.assertEqual((got.lead_minutes, got.event.hour, got.due.minute), (10, 15, 50))
 
+    def test_answer_that_has_a_time_and_no_text_uses_the_models_text(self):
+        # after "sim" to an offer the user says only the hour: the text is what the model understood
+        flow = ReminderFlow()
+        self.assertEqual(flow.start(1, "amanhã", NOW, text="dentista", when="amanhã").kind, "hora")
+        got = flow.answer(1, "às 14", NOW)
+        self.assertEqual((got.text, due_of(got)), ("dentista", (10, 13, 14, 0)))
+
     def test_direct_plan_helper_matches_the_flow(self):
         got = plan_from_words("me avisa amanhã às 9 da prova", "prova", "amanhã", 0, NOW, None)
         self.assertEqual((got.text, due_of(got)), ("prova", (10, 13, 9, 0)))
@@ -661,6 +685,17 @@ class HardSentencesTest(unittest.TestCase):
         "me lembra amanhã às 19h00 de ligar": ("ligar", (10, 13, 19, 0)),
         "me lembra amanhã à uma da tarde de ligar": ("ligar", (10, 13, 13, 0)),
         "me lembra amanhã às 13 horas de ligar": ("ligar", (10, 13, 13, 0)),
+        "me lembra de ir à feira sábado às 8 da manhã": ("ir à feira", (10, 17, 8, 0)),
+        "me lembra de ir às compras amanhã às 9": ("ir às compras", (10, 13, 9, 0)),
+        "me lembra, por favor, de ligar pro Carlos amanhã às 9": ("ligar pro Carlos", (10, 13, 9, 0)),
+        "me lembra amanhã às 9 de ligar pro Carlos por favor": ("ligar pro Carlos", (10, 13, 9, 0)),
+        "me lembra de dar parabéns pra Ana dia 20 às 8": ("dar parabéns pra Ana", (10, 20, 8, 0)),
+        "me lembra de ligar pro Carlos amanhã às 9 horas e 30 minutos": ("ligar pro Carlos", (10, 13, 9, 30)),
+        "me lembra daqui a 2 dias às 9 de ligar": ("ligar", (10, 14, 9, 0)),
+        "me lembra em 3 dias às 8 da manhã de ligar": ("ligar", (10, 15, 8, 0)),
+        "me lembra de ligar pro Carlos às 9 da manhã de sexta": ("ligar pro Carlos", (10, 16, 9, 0)),
+        "me lembra de ligar pro Carlos às 9 de amanhã": ("ligar pro Carlos", (10, 13, 9, 0)),
+        "me lembra do dentista dia 15 às 14h30": ("dentista", (10, 15, 14, 30)),
     }
     ASK = {
         "me lembra de buscar o Pedro às 5": "ampm",
@@ -675,6 +710,13 @@ class HardSentencesTest(unittest.TestCase):
         "me lembra mês que vem às 9 de ligar": "entendi",
         "me lembra no natal às 9 de ligar": "entendi",
         "me lembra de ligar pro Carlos amanhã às 9 da manhã e às 8 da noite": "varios",
+        "me lembra sábado e domingo às 9 de ligar": "varios",
+        "me lembra hoje e amanhã às 18 de ligar": "varios",
+        "me lembra dia 20 e dia 21 às 9 de ligar": "varios",
+        "me lembra de ligar daqui a 10 minutos e daqui a 20": "varios",
+        "me lembra daqui a 2 dias às 9 e sexta às 10 de ligar": "varios",
+        "me lembra daqui a 2 dias de ligar": "hora",
+        "me lembra de ligar pro Carlos no dia 25": "hora",
     }
 
     def test_sentences_that_must_be_understood(self):

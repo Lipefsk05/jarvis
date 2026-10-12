@@ -21,12 +21,16 @@ class RelativeTest(unittest.TestCase):
             "daqui duas horas": at(9, 10, 13, 0),
             "daqui a uma hora": at(9, 10, 12, 0),
             "daqui a meia hora": at(9, 10, 11, 30),
-            "em 3 dias": at(12, 10, 11, 0),
-            "daqui a 1 semana": at(16, 10, 11, 0),
             "daqui a 2h": at(9, 10, 13, 0),
+            "em 3 dias às 9": at(12, 10, 9, 0),
+            "daqui a 1 semana às 15h": at(16, 10, 15, 0),
         }
         for text, expected in cases.items():
             self.assertEqual(parse(text, NOW), When(expected), text)
+
+    def test_days_and_weeks_ahead_ask_the_hour(self):
+        for text in ("em 3 dias", "daqui a 1 semana", "daqui a 2 dias"):
+            self.assertEqual(parse(text, NOW).kind, "hora", text)
 
     def test_absurd_amounts_are_questioned(self):
         self.assertIsInstance(parse("daqui a 0 minutos", NOW), Ask)
