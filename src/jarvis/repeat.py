@@ -101,6 +101,13 @@ def extract(raw: str) -> Extraction:
                         k += 1
                     else:
                         break
+                if len(days) == 1 and k + 1 < len(n) and n[k] == "a" and _weekday(n[k + 1]):  # "toda terça a quinta"
+                    first, last = WEEKDAYS.index(days[0]), WEEKDAYS.index(_weekday(n[k + 1]))
+                    days = [WEEKDAYS[(first + step) % 7] for step in range((last - first) % 7 + 1)]
+                    k += 2
+                    if days == list(WEEKDAYS[:5]):  # "toda segunda a sexta" is the weekdays repeat
+                        repeat, i = WEEKDAYS_ONLY, k
+                        continue
                 repeat = WEEKLY
                 if len(days) > 1:
                     many, i = days, k

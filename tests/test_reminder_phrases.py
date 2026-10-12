@@ -26,6 +26,7 @@ PLANNED = {
     "me lembra na sexta que vou ao médico às 14h": ("vou ao médico", 16, 10, 14, 0, None),
     "me lembra sábado que vem de comprar presente": ("comprar presente", 17, 10, 9, 0, None),
     "me lembra às 8:30 da manhã de amanhã de tomar remédio": ("tomar remédio", 12, 10, 8, 30, None),
+    "me lembra toda segunda a sexta às 7 da manhã de treinar": ("treinar", 12, 10, 7, 0, "weekdays"),
     "me lembra do dentista amanhã às 14": ("dentista", 12, 10, 14, 0, None),
     # as the audio transcription writes them: question mark at the end, "uma", "à tarde", "às sete da manhã"
     "Me lembra em uma hora e meia de ver o bolo?": ("ver o bolo", 11, 10, 16, 30, None),
@@ -45,6 +46,10 @@ SERIES = {
     "me lembra toda segunda e quarta às 7 de treinar": ("treinar", [(12, 10, 7, 0), (14, 10, 7, 0)]),
     "Pode me lembrar toda segunda e quarta de manhã, às sete da manhã, treinar?": ("treinar", [(12, 10, 7, 0), (14, 10, 7, 0)]),
     "me lembra todo sábado e domingo às 10 de correr": ("correr", [(17, 10, 10, 0), (18, 10, 10, 0)]),
+    "me lembra toda segunda, terça, quarta, quinta, sexta e sábado às 7 da manhã de treinar": ("treinar", [(12, 10, 7, 0), (13, 10, 7, 0), (14, 10, 7, 0), (15, 10, 7, 0), (16, 10, 7, 0), (17, 10, 7, 0)]),
+    "me lembra toda terça a quinta às 18 de estudar": ("estudar", [(13, 10, 18, 0), (14, 10, 18, 0), (15, 10, 18, 0)]),
+    "me lembra toda segunda, terça, quarta, quinta e sexta às 7 de treinar": ("treinar", [(12, 10, 7, 0), (13, 10, 7, 0), (14, 10, 7, 0), (15, 10, 7, 0), (16, 10, 7, 0)]),
+    "me lembra todo domingo, segunda, terça, quarta, quinta, sexta e sábado às 8 de tomar vitamina": ("tomar vitamina", [(18, 10, 8, 0), (12, 10, 8, 0), (13, 10, 8, 0), (14, 10, 8, 0), (15, 10, 8, 0), (16, 10, 8, 0), (17, 10, 8, 0)]),
     "me lembra toda segunda, quarta e sexta às 18h de estudar": ("estudar", [(12, 10, 18, 0), (14, 10, 18, 0), (16, 10, 18, 0)]),
 }
 
