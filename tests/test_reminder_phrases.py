@@ -27,10 +27,14 @@ PLANNED = {
     "me lembra sábado que vem de comprar presente": ("comprar presente", 17, 10, 9, 0, None),
     "me lembra às 8:30 da manhã de amanhã de tomar remédio": ("tomar remédio", 12, 10, 8, 30, None),
     "me lembra do dentista amanhã às 14": ("dentista", 12, 10, 14, 0, None),
+    # as the audio transcription writes them: question mark at the end, "uma", "à tarde", "às sete da manhã"
+    "Me lembra em uma hora e meia de ver o bolo?": ("ver o bolo", 11, 10, 16, 30, None),
+    "Me lembra amanhã à tarde de buscar o bolo?": ("buscar o bolo", 12, 10, 15, 0, None),
 }
 # sentence -> the kind of question the code must ask instead of guessing
 ASKED = {
     "me lembra toda segunda e quarta às 7 de treinar": "repeticao",
+    "Pode me lembrar toda segunda e quarta de manhã, às sete da manhã, treinar?": "repeticao",
     "me lembra todo sábado e domingo às 10 de correr": "repeticao",
     "me lembra de a cada 2 horas beber água": "repeticao",
     "me lembra de 2 em 2 horas de beber água": "repeticao",

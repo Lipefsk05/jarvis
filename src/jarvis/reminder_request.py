@@ -150,7 +150,7 @@ def _clean_text(tokens: list[str]) -> str:
         tokens = tokens[1:]
     while tokens and _norm(tokens[-1]) in _TEXT_TAIL:
         tokens = tokens[:-1]
-    return " ".join(tokens).strip(" ,;:-")
+    return " ".join(tokens).strip(" ,;:-?!.")  # a transcribed question mark is not part of the text
 
 
 def split_request(raw: str) -> tuple[str, str, int]:
