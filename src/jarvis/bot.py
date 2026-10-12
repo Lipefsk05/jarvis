@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
@@ -32,7 +32,8 @@ from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminder_request import PlannedSeries, is_schedule, plan_from_words, plan_parts, plan_reminder
+from .reminder_flow import Dropped, ReminderFlow
+from .reminder_request import PlannedSeries, is_schedule
 from .reminder_text import confirmation, listing, series_confirmation
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -72,6 +73,7 @@ def build_application(settings: Settings) -> Application:
     gate = HumorGate()
     history = History(settings.history_messages, settings.state_dir / "conversa.json")
     reminders = ReminderStore(settings.state_dir / "lembretes.json")
+    flow = ReminderFlow()
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
@@ -124,11 +126,10 @@ def build_application(settings: Settings) -> Application:
             await reply_tasks(message, task_query_words(action.area, min_len=3))
             assistant.remember(chat_id, "(Mostrei as pendências" + (f" de {action.area}" if action.area else "") + ".)")
         elif action.name == "criar_lembrete":
-            if user_text:  # when comes from the user's words: the model drops days and hours
-                planned = plan_from_words(user_text, action.texto, action.quando, action.antecedencia,
-                                          clock(), settings.reminder_default_hour)
-            else:
-                planned = plan_parts(action.texto, action.quando, action.antecedencia, clock(), settings.reminder_default_hour)
+            # The user's own words give the day and the hour (the model drops details); the model only gives the text.
+            # After a "yes" to an offer there are no words to read, so the model's `quando` is the user's request.
+            said = user_text or action.quando + (f", {action.antecedencia} min antes" if action.antecedencia else "")
+            planned = flow.start(chat_id, said, clock(), text=action.texto, when=action.quando, lead=action.antecedencia)
             await store_reminder(message, chat_id, planned)
         elif action.name == "listar_lembretes":
             await message.reply_text(listing(reminders.pending(), clock()))
@@ -154,7 +155,9 @@ def build_application(settings: Settings) -> Application:
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
-        if parse_reminder_request(text) is None and await complete_draft(message, chat_id, text):
+        answered = flow.answer(chat_id, text, clock())  # a question about a reminder is waiting for this message
+        if answered is not None:
+            await store_reminder(message, chat_id, answered)
             return
         note = parse_note_request(text)
         if note is not None:  # handled by code: no model call, nothing to invent
@@ -225,6 +228,10 @@ def build_application(settings: Settings) -> Application:
         now = clock()
         if isinstance(planned, Ask):
             await message.reply_text(planned.question)
+            assistant.remember(chat_id, planned.question)  # so a later "sim" or "às 8" is read in context
+            return
+        if isinstance(planned, Dropped):
+            await message.reply_text(planned.message)
             return
         if isinstance(planned, PlannedSeries):
             await store_series(message, chat_id, planned)
@@ -254,35 +261,11 @@ def build_application(settings: Settings) -> Application:
         await message.reply_text(text)
         assistant.remember(chat_id, text)
 
-    # A half-understood request ("me lembra de orar" -> "para quando?") waits for the answer, so the reply
-    # completes it instead of starting from zero.
-    DRAFT_ASKS = {"entendi", "texto", "hora", "ampm"}
-    DRAFT_TTL = timedelta(minutes=10)
-    drafts: dict[int, tuple[str, datetime]] = {}
-
     async def create_reminder(message, chat_id: int, raw: str) -> None:
         if not raw:
             await message.reply_text(REMIND_USAGE)
             return
-        now = clock()
-        planned = plan_reminder(raw, now, settings.reminder_default_hour)
-        if isinstance(planned, Ask) and planned.kind in DRAFT_ASKS:
-            drafts[chat_id] = (raw, now)
-        else:
-            drafts.pop(chat_id, None)
-        await store_reminder(message, chat_id, planned)
-
-    async def complete_draft(message, chat_id: int, text: str) -> bool:
-        """True when `text` finished a pending reminder request (and it was stored)."""
-        draft = drafts.pop(chat_id, None)
-        now = clock()
-        if draft is None or now - draft[1] > DRAFT_TTL:
-            return False
-        planned = plan_reminder(f"{draft[0]} {text}", now, settings.reminder_default_hour)
-        if isinstance(planned, Ask):
-            return False
-        await store_reminder(message, chat_id, planned)
-        return True
+        await store_reminder(message, chat_id, flow.start(chat_id, raw, clock()))
 
     async def cancel_reminder(message, chat_id: int, numero: int, busca: str) -> None:
         if not numero:

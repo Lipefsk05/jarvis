@@ -51,15 +51,6 @@ def _opt_float(value: str | None) -> float | None:
     return float(value.replace(",", "."))
 
 
-def _hour(value: str | None, default: int) -> int:
-    """An hour of the day (0-23); anything else falls back to the default."""
-    try:
-        hour = int((value or "").strip())
-    except ValueError:
-        return default
-    return hour if 0 <= hour <= 23 else default
-
-
 REASONING_LEVELS = ("low", "medium", "high")
 
 
@@ -116,7 +107,6 @@ class Settings:
     persona_path: Path
     history_messages: int
     timezone: str
-    reminder_default_hour: int
     groq_reasoning: str = "low"
 
     @classmethod
@@ -153,7 +143,6 @@ class Settings:
             persona_path=Path(values.get("JARVIS_PERSONA_PATH") or REPO_ROOT / "persona" / "jarvis.md"),
             history_messages=int(values.get("JARVIS_HISTORY_MESSAGES") or 32),
             timezone=(values.get("JARVIS_TIMEZONE") or "America/Sao_Paulo").strip(),
-            reminder_default_hour=_hour(values.get("JARVIS_REMINDER_DEFAULT_HOUR"), 9),
             groq_reasoning=_reasoning(values.get("JARVIS_GROQ_REASONING")),
         )
 
