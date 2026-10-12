@@ -227,14 +227,14 @@ def _restate(planned, reply: str) -> str:
     if not _DAY_SAID.search(fold(reply)):
         if isinstance(planned, PlannedSeries):
             parts.append("toda " + " e ".join(WEEKDAY_NAMES[i.due.weekday()] for i in items))
-        elif first.repeat == "daily":
-            parts.append("todo dia")
-        elif first.repeat == "weekdays":
-            parts.append("nos dias úteis")
-        elif first.repeat == "weekly":
-            parts.append("toda " + WEEKDAY_NAMES[(first.event or first.due).weekday()])
         else:
-            parts.append(f"{(first.event or first.due):%d/%m/%Y}")
+            parts.append(f"{(first.event or first.due):%d/%m/%Y}")  # the first day stays what the user said ("amanhã")
+            if first.repeat == "daily":
+                parts.append("todo dia")
+            elif first.repeat == "weekdays":
+                parts.append("nos dias úteis")
+            elif first.repeat == "weekly":
+                parts.append("toda " + WEEKDAY_NAMES[(first.event or first.due).weekday()])
     parts.append(reply)
     if first.duration:
         parts.append(f"por {first.duration} minutos")

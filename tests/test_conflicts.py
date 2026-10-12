@@ -153,6 +153,22 @@ class ClashConversationTest(unittest.TestCase):
         self.assertEqual(again.kind, "conflito")
         self.assertIsInstance(flow.answer(1, "não, às 12", NOW), Planned)
 
+    def test_a_new_time_keeps_the_first_day_of_a_repeating_reminder(self):
+        # seen on the phone: "correr amanhã às 10, dias úteis" then "às 11" became "hoje às 11"
+        flow = self.flow(stored(1, "treinar", at(13, 9), 120, "weekdays"))
+        self.assertEqual(flow.start(1, "amanhã às 10 correr", NOW).kind, "repetir")
+        self.assertEqual(flow.answer(1, "dias úteis", NOW).kind, "conflito")
+        got = flow.answer(1, "às 11", NOW)
+        self.assertIsInstance(got, Planned)
+        self.assertEqual((got.due, got.repeat), (at(13, 11), "weekdays"))
+
+    def test_a_new_time_keeps_the_day_of_a_series_and_a_weekly_one(self):
+        flow = self.flow(stored(1, "treinar", at(14, 9), 120))
+        flow.start(1, "toda segunda e quarta às 10 ligar pro Pedro", NOW)
+        got = flow.answer(1, "às 11", NOW)
+        self.assertIsInstance(got, PlannedSeries)
+        self.assertEqual(sorted((i.due.day, i.due.hour) for i in got.items), [(12, 11), (14, 11)])
+
     def test_the_duration_survives_a_new_time(self):
         flow = self.flow(stored(1, "treinar", at(13, 9), 120))
         flow.start(1, "amanhã às 10 ligar pro Pedro por 30 minutos", NOW)
