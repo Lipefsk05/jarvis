@@ -13,11 +13,6 @@ NOW = datetime(2026, 10, 11, 15, 0, tzinfo=TZ)  # domingo
 
 # sentence -> (text, day, month, hour, minute, repeat)
 PLANNED = {
-    "me lembra de ligar pro joão amanhã de manhã": ("ligar pro joão", 12, 10, 9, 0, None),
-    "me lembra amanhã cedo de pagar a luz": ("pagar a luz", 12, 10, 7, 0, None),
-    "me lembra amanhã de tarde de buscar o bolo": ("buscar o bolo", 12, 10, 15, 0, None),
-    "me lembra hoje à noite de ligar pra minha mãe": ("ligar pra minha mãe", 11, 10, 20, 0, None),
-    "me lembra de manhã de tomar vitamina": ("tomar vitamina", 12, 10, 9, 0, None),
     "me lembra em 1 hora e meia de ver o bolo": ("ver o bolo", 11, 10, 16, 30, None),
     "me lembra daqui a duas horas e meia de ver o bolo": ("ver o bolo", 11, 10, 17, 30, None),
     "me lembra às nove da noite de fechar o caixa": ("fechar o caixa", 11, 10, 21, 0, None),
@@ -25,15 +20,21 @@ PLANNED = {
     "me lembra todos os dias as 13: Oração": ("Oração", 12, 10, 13, 0, "daily"),
     "me lembra na sexta que vou ao médico às 14h": ("vou ao médico", 16, 10, 14, 0, None),
     "me lembra sábado que vem de comprar presente": ("comprar presente", 17, 10, 9, 0, None),
-    "me lembra às 8:30 da manhã de amanhã de tomar remédio": ("tomar remédio", 12, 10, 8, 30, None),
+    "me lembra às 8:30 da manhã de amanhã de buscar o pacote": ("buscar o pacote", 12, 10, 8, 30, None),
     "me lembra toda segunda a sexta às 7 da manhã de treinar": ("treinar", 12, 10, 7, 0, "weekdays"),
     "me lembra do dentista amanhã às 14": ("dentista", 12, 10, 14, 0, None),
     # as the audio transcription writes them: question mark at the end, "uma", "à tarde", "às sete da manhã"
     "Me lembra em uma hora e meia de ver o bolo?": ("ver o bolo", 11, 10, 16, 30, None),
-    "Me lembra amanhã à tarde de buscar o bolo?": ("buscar o bolo", 12, 10, 15, 0, None),
 }
 # sentence -> the kind of question the code must ask instead of guessing
 ASKED = {
+    # a part of the day without an hour is never turned into one: the code asks which hour
+    "me lembra de ligar pro joão amanhã de manhã": "hora",
+    "me lembra amanhã cedo de pagar a luz": "hora",
+    "me lembra amanhã de tarde de buscar o bolo": "hora",
+    "me lembra hoje à noite de ligar pra minha mãe": "hora",
+    "me lembra de manhã de buscar o pacote": "hora",
+    "Me lembra amanhã à tarde de buscar o bolo?": "hora",
     "me lembra de a cada 2 horas beber água": "repeticao",
     "me lembra de 2 em 2 horas de beber água": "repeticao",
     "me lembra todo mês dia 5 de pagar o cartão": "repeticao",
@@ -85,13 +86,6 @@ class PhraseCorpusTest(unittest.TestCase):
                 self.assertIsInstance(got, Ask, got)
                 self.assertEqual(got.kind, kind)
 
-    def test_part_of_day_says_the_hour_was_assumed(self):
-        self.assertTrue(plan("me lembra amanhã de tarde de buscar o bolo").hour_assumed)
-        self.assertFalse(plan("me lembra amanhã às 15 de buscar o bolo").hour_assumed)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class SeriesConfirmationTest(unittest.TestCase):

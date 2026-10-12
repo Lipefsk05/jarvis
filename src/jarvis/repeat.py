@@ -22,9 +22,10 @@ _NO_INTERVAL = Ask(
     "repeticao",
     "Repetir a cada tantas horas ainda não existe, senhor. Repito por dia, em dias úteis ou num dia da semana. Como prefere?",
 )
-_NEEDS_WEEKDAY = Ask("repeticao", "Em que dia da semana, senhor? Por exemplo: \"toda segunda às 9\".")
+_NEEDS_WEEKDAY = Ask("dia_semana", "Em que dia da semana, senhor? Por exemplo: \"toda segunda às 9\".")
 _WEEKDAY_WORD = re.compile(rf"^({'|'.join(WEEKDAYS)})s?(?:-feiras?)?$")
 _ALL = {"todo", "toda", "todos", "todas"}
+_PLURAL_PERIODS = {"manhas": "manha", "tardes": "tarde", "noites": "noite", "madrugadas": "madrugada"}
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ def extract(raw: str) -> Extraction:
         if word == "diariamente" and repeat is None:
             repeat, i = DAILY, i + 1
             continue
-        if word in {"mensalmente", "anualmente", "quinzenalmente"} or (word in _ALL and nxt in {"mes", "meses", "ano", "anos"}):
+        if word in {"mensalmente", "anualmente", "quinzenalmente"} or (word in _ALL and nxt in {"mes", "meses", "ano", "anos", "quinzena", "quinzenas", "bimestre", "trimestre", "semestre"}):
             return Extraction(raw, None, _UNSUPPORTED)
         if word == "semanalmente" and repeat is None:
             repeat, weekly_any, i = WEEKLY, True, i + 1
@@ -115,9 +116,10 @@ def extract(raw: str) -> Extraction:
                 out.append(days[0])
                 i = k
                 continue
+            following = _PLURAL_PERIODS.get(following, following)
             if following in _PERIODS:  # "toda noite às 9": every day, the period word stays to place the hour
                 repeat = DAILY
-                out.append(tokens[i + skip])
+                out.append(_PLURAL_PERIODS.get(n[i + skip], tokens[i + skip]))
                 i += skip + 1
                 continue
             if following in {"semana", "semanas"}:

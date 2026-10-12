@@ -18,11 +18,13 @@ MONTHS = (
 )
 NUMBER_WORDS = {
     "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
-    "oito": 8, "nove": 9, "dez": 10, "onze": 11, "doze": 12, "quinze": 15, "vinte": 20, "trinta": 30,
+    "oito": 8, "nove": 9, "dez": 10, "onze": 11, "doze": 12, "treze": 13, "catorze": 14, "quatorze": 14, "quinze": 15,
+    "dezesseis": 16, "dezessete": 17, "dezoito": 18, "dezenove": 19, "vinte": 20, "trinta": 30, "quarenta": 40,
+    "cinquenta": 50, "sessenta": 60, "noventa": 90,
 }
 HOUR_WORDS = {w: n for w, n in NUMBER_WORDS.items() if n <= 12}  # "as nove", "as duas"
-# Hour assumed when only a part of the day was said ("amanhã de tarde"); "madrugada" is too vague, so it asks.
-PERIOD_HOURS = {"cedo": 7, "manha": 9, "tarde": 15, "noite": 20}
+PERIOD_NAMES = {"cedo": "cedo", "manha": "da manhã", "tarde": "da tarde", "noite": "da noite", "madrugada": "da madrugada"}
+FRACTIONS = {"meia": 30, "quinze": 15, "quarenta e cinco": 45}
 MAX_AMOUNT = {"minuto": 7 * 24 * 60, "hora": 24 * 31, "dia": 366, "semana": 52}
 EXAMPLES = "\"amanhã às 9\", \"sexta às 15h\", \"dia 20 às 10:30\" ou \"daqui a 2 horas\""
 
@@ -61,14 +63,33 @@ def _day_label(dt: datetime, now: datetime) -> str:
     return f"{WEEKDAY_NAMES[dt.weekday()]}, {dt:%d/%m}"
 
 
+_TENS = {"vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50, "sessenta": 60, "noventa": 90}
+_UNITS_WORDS = {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8, "nove": 9}
+
+
+def _compound_numbers(text: str) -> str:
+    """"vinte e cinco" -> "25", "quarenta e cinco" -> "45": spoken amounts of minutes and hours."""
+    return re.sub(
+        rf"\b({'|'.join(_TENS)}) e ({'|'.join(_UNITS_WORDS)})\b",
+        lambda m: str(_TENS[m.group(1)] + _UNITS_WORDS[m.group(2)]), text,
+    )
+
+
 def _relative(text: str, now: datetime) -> When | Ask | None:
+    text = _compound_numbers(text)
     if re.search(r"\b(?:daqui a|daqui|em|dentro de) meia hora\b", text):
         return When((now + timedelta(minutes=30)).replace(second=0, microsecond=0))
-    half = re.search(r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+)|(um|uma|duas|dois|tres|quatro|cinco)) horas? e meia\b", text)
+    glued = re.search(r"\b(?:daqui a|daqui|em|dentro de) (\d{1,2})h(\d{2})\b", text)  # "daqui a 1h30"
+    if glued and 0 < int(glued.group(1)) * 60 + int(glued.group(2)):
+        return When((now + timedelta(hours=int(glued.group(1)), minutes=int(glued.group(2)))).replace(second=0, microsecond=0))
+    half = re.search(
+        r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+)|(um|uma|duas|dois|tres|quatro|cinco)) horas? e "
+        r"(meia|quinze|quarenta e cinco)\b", text,
+    )
     if half:
         hours = int(half.group(1)) if half.group(1) else NUMBER_WORDS[half.group(2)]
         if 1 <= hours <= 24 * 31:
-            return When((now + timedelta(hours=hours, minutes=30)).replace(second=0, microsecond=0))
+            return When((now + timedelta(hours=hours, minutes=FRACTIONS[half.group(3)])).replace(second=0, microsecond=0))
     match = re.search(r"\b(?:daqui a|daqui|em|dentro de) (?:(\d+) ?|([a-z]+) )(minutos?|min|horas?|h|dias?|semanas?)\b", text)
     if not match:
         return None
@@ -125,16 +146,33 @@ def _find_date(text: str, now: datetime) -> tuple[datetime | None, str, str | No
         return _explicit(day, month, year, today), _strip(text, match), None, None
 
     month_names = "|".join(MONTHS)
-    match = re.search(rf"\bdia (\d{{1,2}})(?: de ({month_names}))?\b", text)
+    day_word = r"(\d{1,2}|primeiro)(?:º|o)?"
+    match = re.search(rf"\b(?:dia )?{day_word} de ({month_names})(?: de (\d{{4}}))?\b", text)  # "20 de novembro"
     if match:
-        day = int(match.group(1))
-        month = MONTHS.index(match.group(2)) + 1 if match.group(2) else None
-        found = _day_of_month(day, month, today)
+        day = 1 if match.group(1) == "primeiro" else int(match.group(1))
+        month = MONTHS.index(match.group(2)) + 1
+        year = int(match.group(3)) if match.group(3) else None
+        if not _valid(day, month, year or today.year) and not (year is None and _valid(day, month, today.year + 1)):
+            return None, text, None, bad_date
+        return _explicit(day, month, year, today), _strip(text, match), None, None
+
+    match = re.search(rf"\b(?:dia )?{day_word} do (\d{{1,2}})\b", text)  # "dia 20 do 11"
+    if match:
+        day = 1 if match.group(1) == "primeiro" else int(match.group(1))
+        month = int(match.group(2))
+        if not (1 <= month <= 12) or not (_valid(day, month, today.year) or _valid(day, month, today.year + 1)):
+            return None, text, None, bad_date
+        return _explicit(day, month, None, today), _strip(text, match), None, None
+
+    match = re.search(rf"\bdia {day_word}\b", text)
+    if match:
+        day = 1 if match.group(1) == "primeiro" else int(match.group(1))
+        found = _day_of_month(day, None, today)
         if found is None:
             return None, text, None, bad_date
         return found, _strip(text, match), None, None
 
-    match = re.search(rf"\b({'|'.join(WEEKDAYS)})(?:-feira)?\b", text)
+    match = re.search(rf"\b({'|'.join(WEEKDAYS)})(?:[- ]feira)?\b", text)
     if match:
         ahead = (WEEKDAYS.index(match.group(1)) - today.weekday()) % 7
         return today + timedelta(days=ahead), _strip(text, match), "weekday", None
@@ -176,23 +214,27 @@ def _find_time(text: str) -> tuple[tuple[int, int] | None, bool, Ask | None]:
     period_match = re.search(r"\b(cedo|manha|tarde|noite|madrugada)\b", text)
     period = period_match.group(1) if period_match else None
 
-    if re.search(r"\bmeio[- ]?dia\b", text):
-        return (12, 0), True, None
+    noon = re.search(r"\bmeio[- ]?dia(?: e (meia|quinze|quarenta e cinco))?\b", text)
+    if noon:
+        return (12, FRACTIONS.get(noon.group(1) or "", 0)), True, None
     if re.search(r"\bmeia[- ]?noite\b", text):
         return (0, 0), True, None
 
     hour = minute = None
     words = "|".join(HOUR_WORDS)
+    frac = r"(?: e (?P<f>meia|quinze|quarenta e cinco))?"
     for pattern in (
-        r"\b(\d{1,2}):(\d{2})\b",
-        r"\b(\d{1,2})\s*(?:h|hr|hrs|horas?)\s*(\d{2})?\b",
-        rf"\b(\d{{1,2}}|{words}) (?:da|de) (?:manha|tarde|noite|madrugada)\b",
-        rf"\bas (\d{{1,2}}|{words})\b",
+        r"\b(?P<h>\d{1,2}):(?P<m>\d{2})(?:h|hs|hrs)?\b",
+        r"\b(?P<h>\d{1,2})\s*(?:h|hr|hrs|horas?)\s*(?P<m>\d{2})?\b",
+        rf"\b(?P<h>\d{{1,2}}|{words}){frac} (?:da|de) (?:manha|tarde|noite|madrugada)\b",
+        rf"\bas (?P<h>\d{{1,2}}|{words}){frac}\b",
     ):
         match = re.search(pattern, text)
         if match:
-            hour = int(match.group(1)) if match.group(1).isdigit() else HOUR_WORDS[match.group(1)]
-            minute = int(match.group(2)) if match.lastindex and match.lastindex >= 2 and match.group(2) else 0
+            raw_hour = match.group("h")
+            hour = int(raw_hour) if raw_hour.isdigit() else HOUR_WORDS[raw_hour]
+            groups = match.groupdict()
+            minute = int(groups["m"]) if groups.get("m") else FRACTIONS.get(groups.get("f") or "", 0)
             break
     if hour is None:
         return None, period is not None, None
@@ -220,7 +262,12 @@ def _finish(date: datetime, time: tuple[int, int] | None, now: datetime, default
 def parse(text: str, now: datetime, default_hour: int | None = None) -> When | Ask:
     """Turn 'amanhã às 9' into a datetime, or ask. `now` must be timezone-aware.
     `default_hour` fills in the hour when only a day was given; None means ask for it."""
-    text = re.sub(r"\bque vem\b", " ", _norm(text))  # "sábado que vem" is the next Saturday, same as "sábado"
+    text = _norm(text)
+    next_week = bool(re.search(r"\b(?:semana que vem|proxima semana|semana seguinte|outra semana)\b", text))
+    text = re.sub(r"\b(?:semana que vem|proxima semana|semana seguinte|outra semana)\b", " ", text)
+    proximo = bool(re.search(r"\bproxim[oa] (?:segunda|terca|quarta|quinta|sexta|sabado|domingo)", text))
+    text = re.sub(r"\bque vem\b", " ", text)  # "sábado que vem" is the next Saturday, same as "sábado"
+    text = re.sub(r"\b(?:proximo|proxima)\b", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return _dont_understand()
@@ -234,14 +281,27 @@ def parse(text: str, now: datetime, default_hour: int | None = None) -> When | A
     date, rest, kind, error = _find_date(text, now)
     if error:
         return error
+    today = now.replace(hour=0, minute=0)
+    if next_week:  # "sexta da semana que vem": that Friday of next week, not this week's
+        if kind != "weekday":
+            return _dont_understand()
+        date, kind = today + timedelta(days=7 - today.weekday() + date.weekday()), None
+    elif proximo and kind == "weekday" and date.date() == now.date():
+        date += timedelta(days=7)  # "próxima segunda" said on a Monday is next week's
+    if date is None and re.search(r"\b(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|"
+                                  r"dezembro|semana|semanas|mes|meses|ano|anos|ontem|anteontem|natal|fds|fim|carnaval|pascoa|reveillon)\b", rest):
+        return _dont_understand()  # a date was said but not understood: never fall back to "the next time it is that hour"
     time, had_period, error = _find_time(rest)
     if error:
         return error
-    period_hour = False  # the hour came from a part of the day ("de tarde"), not from the user
+    if re.search(r"\bmeia[- ]?noite\b", rest) and (date is None or date.date() == now.date()):
+        date, kind, time = today + timedelta(days=1), None, (0, 0)  # "hoje à meia noite": the coming midnight, 00:00 tomorrow
     if time is None:
-        period = re.search(r"\b(cedo|manha|tarde|noite)\b", rest)
-        if period:
-            time, period_hour = (PERIOD_HOURS[period.group(1)], 0), True
+        period = re.search(r"\b(cedo|manha|tarde|noite|madrugada)\b", rest)
+        if period:  # "amanhã de manhã": which hour of the morning? never guessed
+            where = f" Para {_day_label(date, now)}." if date is not None else ""
+            what = "Que horas, senhor?" if period.group(1) == "cedo" else f"Que horas {PERIOD_NAMES[period.group(1)]}, senhor?"
+            return Ask("hora", what + where)
 
     if date is None:
         if time is None:
@@ -249,18 +309,20 @@ def parse(text: str, now: datetime, default_hour: int | None = None) -> When | A
         today = now.replace(hour=0, minute=0)
         today_due = today.replace(hour=time[0], minute=time[1])
         if today_due > now:
-            return When(today_due, hour_assumed=period_hour)
+            return When(today_due)
         if not had_period and 1 <= time[0] <= 11:
             evening = today.replace(hour=time[0] + 12, minute=time[1])
             if evening > now:
                 return Ask("ampm", f"{time[0]}h da manhã de amanhã, ou {time[0] + 12}h de hoje, senhor?")
-        return When(today_due + timedelta(days=1), hour_assumed=period_hour)
+        return When(today_due + timedelta(days=1))
 
     if kind == "weekday" and date.date() == now.date():
         time_today_is_ahead = time is not None and date.replace(hour=time[0], minute=time[1]) > now
         if not time_today_is_ahead:
             date += timedelta(days=7)  # "sexta" said on a Friday means next Friday unless the time is still ahead
-    result = _finish(date, time, now, default_hour)
-    if period_hour and isinstance(result, When):
-        result = When(result.dt, hour_assumed=True)
-    return result
+    if time is not None and not had_period and 1 <= time[0] <= 6:  # "amanhã às 3": morning or afternoon?
+        if date.date() == now.date() and date.replace(hour=time[0], minute=time[1]) <= now:
+            time = (time[0] + 12, time[1])  # today's morning is over: it can only mean the afternoon
+            return _finish(date, time, now, default_hour)
+        return Ask("ampm", f"Às {time[0]}h da manhã ou da tarde, senhor? Para {_day_label(date, now)}.")
+    return _finish(date, time, now, default_hour)
