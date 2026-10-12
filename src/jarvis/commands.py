@@ -37,9 +37,11 @@ def parse_note_request(text: str) -> str | None:
     return _FILLER.sub("", match.group(1).strip()).strip()
 
 
-# "me lembra de pagar a luz amanhã às 9". Needs "me": a bare "lembra do que falei?" is a question about memory.
+# "me lembra de pagar a luz amanhã às 9", also "pode lembrar ..." / "lembra eu ..." (a transcription or a typo drops the "me").
+# A bare "lembra do que falei?" stays out: it is a question about memory.
 _REMINDER = re.compile(
-    r"^\s*(?:jarvis[\s,:]+)?(?:(?:pode\s+|poderia\s+)?me\s+(?:lembra|lembre|lembrar)|(?:lembra|lembre)-me)\b[\s:,\-]*(.*)$",
+    r"^\s*(?:jarvis[\s,:]+)?(?:(?:pode\s+|poderia\s+)?me\s+(?:lembra|lembre|lembrar)|(?:lembra|lembre)-me"
+    r"|(?:pode|poderia)\s+(?:lembra|lembre|lembrar)(?:\s+eu)?|(?:lembra|lembre)\s+eu)\b[\s:,\-]*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 
