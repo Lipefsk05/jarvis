@@ -46,6 +46,7 @@ NATURAL_LANGUAGE = (
     'Pergunte "quais tarefas eu tenho?", "tarefas do dindin" ou "o que falta no domo" e eu respondo como no /tarefas (só leitura).',
     'Escreva "anota que ...", "pode anotar ..." ou "guarda isso: ..." e eu guardo a nota no inbox do Mind.',
     'Escreva "me lembra de ... amanhã às 9" e eu marco o lembrete, no mesmo formato do /lembra.',
+    'Avise onde está: "cheguei no trampo", "saí de casa", "saí do trabalho" ou "cheguei em casa" (pode dizer a hora, "às 9:40"). O dia se ajusta pelo que o senhor contar.',
     "Mande um áudio (até 5 minutos) e eu transcrevo, mostro o que entendi e respondo em texto, como se você tivesse digitado.",
     "Converso e tiro dúvidas no que eu sei.",
 )

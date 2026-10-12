@@ -6,7 +6,8 @@ import json
 import logging
 import sys
 import traceback
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,7 @@ from telegram.ext import (
     filters,
 )
 
+from .actions import Action
 from .assistant import Assistant
 from .audio import GroqTranscriber, TranscribeError, check_audio, transcript_line
 from .budget import Budget
@@ -38,6 +40,8 @@ from .outbox import Outbox, TelegramChannel
 from .reminder_flow import Dropped, ReminderFlow
 from .reminder_request import PlannedSeries, is_schedule, parse_misheard_request
 from .reminder_text import confirmation, listing, series_confirmation
+from .marks import AMBIGUOUS, MARK_ANCHOR, MarkAsk, answer_place, answer_time, ask_missing, missing_step, confirmation as mark_confirmation, parse_moment, resolve_ambiguous
+from .plan import Habits, PlanStore
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
 from .telegram_format import format_items, format_summary, safe
@@ -52,6 +56,8 @@ UNSUPPORTED_MEDIA = "Por ora só entendo texto e áudio, senhor. Fotos, arquivos
 UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /ajuda para ver o que sei fazer."
 TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
+_STEP_MARK = {anchor: mark for mark, anchor in MARK_ANCHOR.items()}
+MARK_QUESTION_TTL = timedelta(minutes=10)
 HANDLER_FAILED = "Tive um problema ao tratar isso, senhor. Pode tentar de novo?"
 
 
@@ -84,6 +90,10 @@ def build_application(settings: Settings) -> Application:
     history = History(settings.history_messages, settings.state_dir / "conversa.json")
     reminders = ReminderStore(settings.state_dir / "lembretes.json")
     flow = ReminderFlow(pending=reminders.pending)
+    plans = PlanStore(settings.state_dir / "plano.json")
+    habits = Habits()
+    pending_steps: dict[int, tuple] = {}  # chat -> (skipped anchor, when it was asked) awaiting "a que horas foi?"
+    pending_marks: dict[int, tuple] = {}  # chat -> (the "cheguei"/"saí" action, when it was asked) awaiting "em casa"/"no trabalho"
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
@@ -141,6 +151,8 @@ def build_application(settings: Settings) -> Application:
             said = user_text or action.quando + (f", {action.antecedencia} min antes" if action.antecedencia else "")
             planned = flow.start(chat_id, said, clock(), text=action.texto, when=action.quando, lead=action.antecedencia)
             await store_reminder(message, chat_id, planned)
+        elif action.name == "avisar_marco":
+            await report_mark(message, chat_id, action)
         elif action.name == "listar_lembretes":
             await message.reply_text(listing(reminders.pending(), clock()))
             assistant.remember(chat_id, "(Mostrei os lembretes pendentes.)")
@@ -156,6 +168,32 @@ def build_application(settings: Settings) -> Application:
             history.clear(chat_id)
             await message.reply_text("Conversa limpa, senhor.")
 
+    async def report_mark(message, chat_id: int, action, ask_skipped: bool = True) -> None:
+        """Record where the Felipe says he is ("cheguei no trampo") as an anchor of today's plan."""
+        now = clock()
+        told = plans.get(now.date()).told if plans.get(now.date()) else {}
+        anchor = MARK_ANCHOR.get(action.marco) or resolve_ambiguous(action.marco, told, now)
+        moment = parse_moment(action.quando, now)
+        problem = anchor if isinstance(anchor, MarkAsk) else moment if isinstance(moment, MarkAsk) else None
+        if isinstance(anchor, MarkAsk) and action.marco in AMBIGUOUS:
+            pending_marks[chat_id] = (action, now)
+        if problem is not None:
+            await message.reply_text(problem.question)
+            assistant.remember(chat_id, problem.question)
+            return
+        try:
+            plan = plans.tell(now.date(), anchor, moment, habits, tz)
+        except ValueError:
+            reply = "Isso não bate com o que o senhor já me avisou hoje, senhor. Pode me dizer de novo, com a hora?"
+        else:
+            reply = mark_confirmation(anchor, moment, plan.told, habits, tz)
+            step = missing_step(anchor, plan.told) if ask_skipped else None
+            if step is not None:  # "chegou em casa" with no "saí do trabalho": he may have mistyped, so ask
+                reply += " " + ask_missing(step)
+                pending_steps[chat_id] = (step, now)
+        await message.reply_text(reply)
+        assistant.remember(chat_id, reply)
+
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await handle_text(update.effective_message, update.effective_chat.id, update.effective_message.text, context)
 
@@ -165,6 +203,18 @@ def build_application(settings: Settings) -> Application:
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
+        skipped = pending_steps.pop(chat_id, None)  # any other message closes the "a que horas foi?" question
+        if skipped is not None and clock() - skipped[1] <= MARK_QUESTION_TTL:
+            when = answer_time(text, clock())
+            if when is not None:
+                await report_mark(message, chat_id, Action("avisar_marco", marco=_STEP_MARK[skipped[0]], quando=when.strftime("%H:%M")), ask_skipped=False)
+                return
+        waiting = pending_marks.pop(chat_id, None)  # any other message closes the "onde?" question
+        if waiting is not None and clock() - waiting[1] <= MARK_QUESTION_TTL:
+            concrete = answer_place(waiting[0].marco, text)
+            if concrete is not None:
+                await report_mark(message, chat_id, replace(waiting[0], marco=concrete))
+                return
         answered = flow.answer(chat_id, text, clock())  # a question about a reminder is waiting for this message
         if answered is not None:
             await store_reminder(message, chat_id, answered)

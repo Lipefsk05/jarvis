@@ -73,16 +73,17 @@ _CANCEL_INTENT = re.compile(r"\b(?:cancel\w*|apag\w*|remov\w*|desmarc\w*|exclu\w
 _LIST_INTENT = re.compile(r"\b(?:lembretes?|marcad\w*|agendad\w*|compromiss\w*|avisos?|pendentes?|o que (?:eu )?(?:tenho|tem|esta)|quais)\b")
 _CLEAR_INTENT = re.compile(r"\b(?:esquec\w*|limp\w*|recome\w*|zera\w*|apag\w*|comec\w* de novo)")
 _NOTE_INTENT = re.compile(r"\b(?:anot\w*|registr\w*|guard\w*|salv\w*|notas?|esquec\w*|memoriz\w*|nao deixa)")
+_MARK_INTENT = re.compile(r"\b(?:cheg\w*|sa(?:i|ir|ind\w*|iu|ida)\b|desci\b|descend\w*|embarq\w*|cheguei)")
 
 
 def has_intent(action: str, text: str) -> bool:
     """Did the user's own words ask for this action? Only the actions that change things or may confuse are checked."""
     folded = fold(text)
     pattern = {"cancelar_lembrete": _CANCEL_INTENT, "listar_lembretes": _LIST_INTENT,
-               "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT}.get(action)
+               "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT, "avisar_marco": _MARK_INTENT}.get(action)
     if pattern is None:
         return True
-    return bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))
+    return bool(pattern.search(folded)) or (action in ("anotar", "avisar_marco") and is_yes(text))
 
 
 _YES_WORDS = {
