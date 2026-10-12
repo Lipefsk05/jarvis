@@ -19,8 +19,9 @@ class FakeTalker:
         self._replies = list(replies or [Reply("ok", 1000, 100)])
         self._error = error
 
-    def reply(self, system, messages, tools=None):
+    def reply(self, system, messages, tools=None, private=False):
         self.calls.append((system, messages))
+        self.private_seen = private
         self.tools_seen = tools
         if self._error:
             raise self._error
@@ -122,6 +123,24 @@ class AssistantTest(unittest.TestCase):
             self.assertIn("nenhum dado de tarefas", talker.calls[0][0])
             a.respond(1, "quais são minhas tarefas de carreira?")
             self.assertIn("Candidatura CLT", talker.calls[1][0])
+
+    def test_task_titles_are_sent_as_private_and_a_failure_points_to_the_command(self):
+        from jarvis.assistant import TASKS_UNAVAILABLE_MESSAGE
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "vault"
+            (root / "tarefas" / "pessoal").mkdir(parents=True)
+            (root / "tarefas" / "pessoal" / "carreira.md").write_text("## Vaga\n- [ ] **Candidatura CLT**\n", encoding="utf-8")
+            talker = FakeTalker()
+            a, _ = self.make(tmp, talker)
+            a._mind_dir = root
+            a.respond(1, "oi")
+            self.assertFalse(talker.private_seen)
+            a.respond(1, "quais são minhas tarefas de carreira?")
+            self.assertTrue(talker.private_seen)
+            failing, _ = self.make(tmp, FakeTalker(error=TalkerError("x")))
+            failing._mind_dir = root
+            self.assertEqual(failing.respond(1, "quais são minhas tarefas de carreira?").text, TASKS_UNAVAILABLE_MESSAGE)
 
     def test_greeting_gets_a_variety_hint_and_other_messages_an_explicit_no_greeting_hint(self):
         with tempfile.TemporaryDirectory() as tmp:

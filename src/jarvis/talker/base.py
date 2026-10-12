@@ -30,7 +30,8 @@ class Reply:
 
 
 class Talker(Protocol):
-    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
+    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None,
+              private: bool = False) -> Reply:
         """Answer given a system prompt and [{'role': 'user'|'assistant', 'content': str}].
 
         `tools` are OpenAI-style function specs; providers that do not support them ignore them."""

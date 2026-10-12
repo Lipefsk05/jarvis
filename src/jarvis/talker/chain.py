@@ -18,6 +18,7 @@ class ChainMember:
     talker: Talker
     price_in: float  # USD per million input tokens
     price_out: float  # USD per million output tokens
+    private_ok: bool = True  # False: may use what it receives (free Gemini), so never sees private context
 
 
 # Failures of the answer itself (cut, empty) say nothing about the provider being down.
@@ -69,11 +70,14 @@ class ChainTalker:
             })
         return out
 
-    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
+    def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None,
+              private: bool = False) -> Reply:
+        """`private`: the prompt carries the user's own data (tasks); only providers that keep it to themselves answer."""
         errors: list[str] = []
         now = self._clock()
-        ready = [m for m in self._members if self._skip_until.get(m.name, 0.0) <= now]
-        for member in ready or self._members:
+        members = [m for m in self._members if m.private_ok] if private else self._members
+        ready = [m for m in members if self._skip_until.get(m.name, 0.0) <= now]
+        for member in ready or members:
             try:
                 reply = member.talker.reply(system, messages, tools)
             except TalkerError as exc:  # also on bad keys: another provider may still work

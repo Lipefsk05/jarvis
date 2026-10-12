@@ -13,7 +13,7 @@ class Fake:
         self.outcome = outcome
         self.calls = 0
 
-    def reply(self, system, messages, tools=None):
+    def reply(self, system, messages, tools=None, private=False):
         self.tools = tools
         self.calls += 1
         if isinstance(self.outcome, Exception):
@@ -156,6 +156,20 @@ class CircuitBreakerTest(unittest.TestCase):
         a.outcome = Reply("de volta", 1, 1)
         self.assertEqual(chain.reply("s", MSGS).provider, "groq")
         self.assertEqual(chain.reply("s", MSGS).provider, "groq")
+
+
+class PrivateContextTest(unittest.TestCase):
+    def test_private_context_never_reaches_a_provider_that_may_keep_it(self):
+        a, b = Fake(TalkerError("RateLimitError", 429)), Fake(Reply("reserva", 1, 1))
+        chain = ChainTalker([ChainMember("groq", a, 0, 0), ChainMember("gemini", b, 0, 0, private_ok=False)])
+        with self.assertRaises(TalkerError):
+            chain.reply("sys com tarefas", MSGS, private=True)
+        self.assertEqual(b.calls, 0)
+
+    def test_without_private_context_the_reserve_still_answers(self):
+        a, b = Fake(TalkerError("RateLimitError", 429)), Fake(Reply("reserva", 1, 1))
+        chain = ChainTalker([ChainMember("groq", a, 0, 0), ChainMember("gemini", b, 0, 0, private_ok=False)])
+        self.assertEqual(chain.reply("sys", MSGS).provider, "gemini")
 
 
 HAS_SDKS = all(importlib.util.find_spec(m) for m in ("groq", "google.genai", "anthropic"))

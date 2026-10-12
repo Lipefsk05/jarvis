@@ -37,6 +37,7 @@ def build_talker(settings: Settings) -> ChainTalker:
                        [settings.model, *settings.fallback_models], settings.groq_reasoning, settings.talker_timeout_s),
             settings.price_in,
             settings.price_out,
+            private_ok=settings.provider != "gemini",
         )
     ]
     for provider in settings.fallback_providers:
@@ -52,6 +53,7 @@ def build_talker(settings: Settings) -> ChainTalker:
                            settings.talker_timeout_s),
                 price_in,
                 price_out,
+                private_ok=provider != "gemini",
             )
         )
     return ChainTalker(members)

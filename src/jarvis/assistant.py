@@ -22,6 +22,10 @@ from .talker.base import Talker, TalkerError
 log = logging.getLogger(__name__)
 
 OFFER_TTL = timedelta(minutes=10)  # how long a "want me to remind you?" stays open
+TASKS_UNAVAILABLE_MESSAGE = (
+    "Não consigo ler as suas tarefas agora, senhor: o provedor principal está indisponível e não envio "
+    "as tarefas ao reserva. Use /tarefas, que funciona sem ele."
+)
 BLOCKED_MESSAGE = (
     "Atingi o teto de gasto de hoje, senhor. Volto a conversar amanhã, "
     "ou assim que o senhor liberar o limite."
@@ -163,21 +167,23 @@ class Assistant:
 
         permitted = self._gate.permitted(chat_id, text)
         hint = self._hints.hint_for(chat_id, text)
+        tasks = self._tasks(text)
         system = render(
             self._template,
             humor_allowed=permitted,
             now=self._clock(),
             estado_atual=self._estado_atual(),
-            tarefas=self._tasks(text),
+            tarefas=tasks,
             dica=hint,
         )
         self._history.add(chat_id, "user", text)
         try:
-            reply = self._talker.reply(system, self._history.messages(chat_id), self._tools or None)
+            reply = self._talker.reply(system, self._history.messages(chat_id), self._tools or None,
+                                       private=bool(tasks))
         except TalkerError as exc:
             log.warning("Talker failed: %s", exc)
             self._history.drop_last(chat_id)
-            return AssistantReply(FAILED_MESSAGE)
+            return AssistantReply(TASKS_UNAVAILABLE_MESSAGE if tasks else FAILED_MESSAGE)
 
         self._budget.add(reply.input_tokens, reply.output_tokens, reply.cost_usd, reply.provider)
         action = parse_action(reply.tool_call)
