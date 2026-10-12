@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -15,6 +16,8 @@ class History:
         self._max = max_messages
         self._path = path
         self._chats: dict[int, list[dict[str, str]]] = {}
+        # A reply runs in a worker thread while the reminder scheduler (event loop) also writes to the history.
+        self._lock = threading.RLock()
         self._load()
 
     def _load(self) -> None:
@@ -50,23 +53,27 @@ class History:
             log.warning("Could not save the conversation to %s", self._path)
 
     def add(self, chat_id: int, role: str, content: str) -> None:
-        messages = self._chats.setdefault(chat_id, [])
-        messages.append({"role": role, "content": content})
-        if len(messages) > self._max:
-            del messages[: len(messages) - self._max]
-        # Providers require the conversation to start with a user message.
-        while messages and messages[0]["role"] != "user":
-            messages.pop(0)
-        self._save()
-
-    def messages(self, chat_id: int) -> list[dict[str, str]]:
-        return [dict(m) for m in self._chats.get(chat_id, [])]
-
-    def drop_last(self, chat_id: int) -> None:
-        if self._chats.get(chat_id):
-            self._chats[chat_id].pop()
+        with self._lock:
+            messages = self._chats.setdefault(chat_id, [])
+            messages.append({"role": role, "content": content})
+            if len(messages) > self._max:
+                del messages[: len(messages) - self._max]
+            # Providers require the conversation to start with a user message.
+            while messages and messages[0]["role"] != "user":
+                messages.pop(0)
             self._save()
 
+    def messages(self, chat_id: int) -> list[dict[str, str]]:
+        with self._lock:
+            return [dict(m) for m in self._chats.get(chat_id, [])]
+
+    def drop_last(self, chat_id: int) -> None:
+        with self._lock:
+            if self._chats.get(chat_id):
+                self._chats[chat_id].pop()
+                self._save()
+
     def clear(self, chat_id: int) -> None:
-        self._chats.pop(chat_id, None)
-        self._save()
+        with self._lock:
+            self._chats.pop(chat_id, None)
+            self._save()

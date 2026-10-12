@@ -268,3 +268,79 @@ class BotModelPathTest(_BotCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_TELEGRAM, "python-telegram-bot not installed")
+class BotRobustnessTest(_BotCase):
+    """An exception in a handler must not leave the user in silence; the connection hiccups are only logged."""
+
+    def error_handler(self):
+        handlers = list(self.app.error_handlers)
+        self.assertEqual(len(handlers), 1, "the bot has no error handler")
+        return handlers[0]
+
+    def fail_with(self, error, update):
+        context = SimpleNamespace(error=error, application=self.app)
+        asyncio.run(self.error_handler()(update, context))
+
+    def update(self, user_id=1):
+        from telegram import Update
+
+        class FakeUpdate(Update):  # a real Update type, without a real Telegram payload
+            @property
+            def effective_message(self):
+                return self.__dict__["_fake_message"]
+
+            @property
+            def effective_user(self):
+                return self.__dict__["_fake_user"]
+
+        update = FakeUpdate.__new__(FakeUpdate)
+        update.__dict__["_fake_message"] = FakeMessage("oi", self.replies)
+        update.__dict__["_fake_user"] = SimpleNamespace(id=user_id)
+        return update
+
+    def test_a_handler_error_gets_an_apology(self):
+        self.fail_with(ValueError("boom with private text"), self.update())
+        self.assertEqual(self.replies, ["Tive um problema ao tratar isso, senhor. Pode tentar de novo?"])
+
+    def test_a_stranger_gets_nothing(self):
+        self.fail_with(ValueError("x"), self.update(user_id=999))
+        self.assertEqual(self.replies, [])
+
+    def test_network_hiccups_are_not_announced(self):
+        from telegram.error import NetworkError, TimedOut
+
+        for error in (NetworkError("Bad Gateway"), TimedOut("Timed out")):
+            self.fail_with(error, self.update())
+        self.assertEqual(self.replies, [])
+
+    def test_an_error_without_a_message_does_not_crash_the_handler(self):
+        self.fail_with(RuntimeError("no update"), None)
+
+    def test_the_log_never_carries_the_exception_message(self):
+        with self.assertLogs("jarvis", level="ERROR") as logs:
+            try:
+                raise ValueError("my secret reminder text")
+            except ValueError as exc:
+                self.fail_with(exc, None)
+        self.assertNotIn("secret", "".join(logs.output))
+        self.assertIn("ValueError", "".join(logs.output))
+
+    def test_polling_never_gives_up_on_the_first_failed_connection(self):
+        from unittest import mock
+
+        import jarvis.bot as bot
+
+        seen = {}
+        fake_app = SimpleNamespace(run_polling=lambda **kw: seen.update(kw))
+        settings = SimpleNamespace(problems=lambda: [], provider="groq", model="m", allowed_ids={1})
+        with mock.patch.object(bot.Settings, "load", return_value=settings), \
+                mock.patch.object(bot, "build_application", return_value=fake_app), \
+                mock.patch("logging.basicConfig"):
+            bot.main()
+        self.assertEqual(seen["bootstrap_retries"], -1)
+
+
+if __name__ == "__main__":
+    unittest.main()

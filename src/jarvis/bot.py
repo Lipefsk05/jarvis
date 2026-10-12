@@ -5,11 +5,14 @@ import asyncio
 import json
 import logging
 import sys
+import traceback
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
 from telegram.constants import ChatAction, ParseMode
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -49,6 +52,13 @@ UNSUPPORTED_MEDIA = "Por ora só entendo texto e áudio, senhor. Fotos, arquivos
 UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /ajuda para ver o que sei fazer."
 TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
+HANDLER_FAILED = "Tive um problema ao tratar isso, senhor. Pode tentar de novo?"
+
+
+def failure_site(error: BaseException) -> str:
+    """Where an exception came from (file:line of the last frame), for the log. Never the message: it may hold what the user wrote."""
+    frames = traceback.extract_tb(error.__traceback__)
+    return f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "?"
 
 
 def feedback_markup() -> InlineKeyboardMarkup:
@@ -381,6 +391,21 @@ def build_application(settings: Settings) -> Application:
         log.info("Update received: kind=%s user_id=%s allowed=%s", kind,
                  user.id if user else "?", bool(user and user.id in settings.allowed_ids))
 
+    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Last line of defence: an exception in a handler must not leave the user in silence."""
+        error = context.error
+        if isinstance(error, (NetworkError, TimedOut)):  # Telegram or the connection hiccuped; there is nothing to say
+            log.warning("Telegram network problem: %s", type(error).__name__)
+            return
+        log.error("Handler failed: %s at %s", type(error).__name__, failure_site(error) if error else "?")
+        message = update.effective_message if isinstance(update, Update) else None
+        user = update.effective_user if isinstance(update, Update) else None
+        if message is not None and user is not None and user.id in settings.allowed_ids:
+            try:
+                await message.reply_text(HANDLER_FAILED)
+            except Exception as exc:  # even the apology may fail (no network): log and move on
+                log.warning("Could not send the failure notice: %s", type(exc).__name__)
+
     async def on_stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         log.warning("Ignored message from non-allowlisted user id=%s", user.id if user else "?")
@@ -418,6 +443,7 @@ def build_application(settings: Settings) -> Application:
                 await asyncio.gather(task, return_exceptions=True)
 
     app = Application.builder().token(settings.telegram_token).post_init(post_init).post_shutdown(post_shutdown).build()
+    app.add_error_handler(on_error)
     app.add_handler(TypeHandler(Update, on_any), group=-1)  # logs ids only, never content
     app.add_handler(CommandHandler("start", on_start, filters=allowed))
     app.add_handler(CommandHandler("anota", on_note, filters=allowed))
@@ -460,4 +486,5 @@ def main() -> None:
         "Starting Jarvis: provider=%s model=%s allowed_users=%d",
         settings.provider, settings.model, len(settings.allowed_ids),
     )
-    build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES)
+    # bootstrap_retries=-1: when the notebook wakes up before the Wi-Fi, keep trying to reach Telegram instead of giving up
+    build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
