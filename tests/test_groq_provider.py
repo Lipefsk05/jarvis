@@ -55,6 +55,12 @@ class GroqFallbackTest(unittest.TestCase):
         self.assertIsNone(parse_limits({}))
         self.assertEqual(parse_limits({"x-ratelimit-limit-requests": "oops"}), None)
 
+    def test_the_http_status_travels_with_the_error_for_the_chain(self):
+        t = self.make({"a": FakeApiError(429), "b": FakeApiError(429)})
+        with self.assertRaises(TalkerError) as ctx:
+            t.reply("sys", self.MSGS)
+        self.assertEqual(ctx.exception.code, 429)
+
     def test_reasoning_kept_minimal_only_for_gpt_oss(self):
         t = self.make({})
         self.assertEqual(t._extra("openai/gpt-oss-120b"), {"reasoning_effort": "low"})

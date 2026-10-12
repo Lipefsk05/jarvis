@@ -10,19 +10,19 @@ from .chain import ChainMember, ChainTalker
 log = logging.getLogger(__name__)
 
 
-def _build_one(provider: str, api_key: str, models: list[str], reasoning: str = "low") -> Talker:
+def _build_one(provider: str, api_key: str, models: list[str], reasoning: str = "low", timeout_s: float = 15.0) -> Talker:
     if provider == "anthropic":
         from .anthropic_provider import AnthropicTalker
 
-        return AnthropicTalker(api_key, models[0])
+        return AnthropicTalker(api_key, models[0], timeout_s=timeout_s)
     if provider == "gemini":
         from .gemini_provider import GeminiTalker
 
-        return GeminiTalker(api_key, models)
+        return GeminiTalker(api_key, models, timeout_s=timeout_s)
     if provider == "groq":
         from .groq_provider import GroqTalker
 
-        return GroqTalker(api_key, models, reasoning=reasoning)
+        return GroqTalker(api_key, models, reasoning=reasoning, timeout_s=timeout_s)
     raise ValueError(f"unknown provider: {provider}")
 
 
@@ -34,7 +34,7 @@ def build_talker(settings: Settings) -> ChainTalker:
         ChainMember(
             settings.provider,
             _build_one(settings.provider, settings.key_for(settings.provider),
-                       [settings.model, *settings.fallback_models], settings.groq_reasoning),
+                       [settings.model, *settings.fallback_models], settings.groq_reasoning, settings.talker_timeout_s),
             settings.price_in,
             settings.price_out,
         )
@@ -48,7 +48,8 @@ def build_talker(settings: Settings) -> ChainTalker:
         members.append(
             ChainMember(
                 provider,
-                _build_one(provider, key, [DEFAULT_MODELS[provider], *DEFAULT_FALLBACKS[provider]], settings.groq_reasoning),
+                _build_one(provider, key, [DEFAULT_MODELS[provider], *DEFAULT_FALLBACKS[provider]], settings.groq_reasoning,
+                           settings.talker_timeout_s),
                 price_in,
                 price_out,
             )

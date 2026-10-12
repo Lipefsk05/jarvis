@@ -60,6 +60,12 @@ def _reasoning(value: str | None) -> str:
     return level if level in REASONING_LEVELS else "low"
 
 
+def _timeout(value: str | None) -> float:
+    """Seconds one provider call may take. Voice needs a low value; unknown or silly values fall back to 15."""
+    number = _opt_float(value)
+    return number if number is not None and 1 <= number <= 60 else 15.0
+
+
 def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
     if value is None or not value.strip():
         return DEFAULT_FALLBACKS.get(provider, ())
@@ -108,6 +114,7 @@ class Settings:
     history_messages: int
     timezone: str
     groq_reasoning: str = "low"
+    talker_timeout_s: float = 15.0
 
     @classmethod
     def load(
@@ -144,6 +151,7 @@ class Settings:
             history_messages=int(values.get("JARVIS_HISTORY_MESSAGES") or 32),
             timezone=(values.get("JARVIS_TIMEZONE") or "America/Sao_Paulo").strip(),
             groq_reasoning=_reasoning(values.get("JARVIS_GROQ_REASONING")),
+            talker_timeout_s=_timeout(values.get("JARVIS_TALKER_TIMEOUT_S")),
         )
 
     def key_for(self, provider: str) -> str:

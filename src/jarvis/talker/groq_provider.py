@@ -33,11 +33,12 @@ MAX_TOKENS_BY_REASONING = {"low": 700, "medium": 1500, "high": 3000}
 
 
 class GroqTalker:
-    def __init__(self, api_key: str, models: list[str], max_tokens: int | None = None, reasoning: str = "low") -> None:
+    def __init__(self, api_key: str, models: list[str], max_tokens: int | None = None, reasoning: str = "low",
+                 timeout_s: float = REQUEST_TIMEOUT_S) -> None:
         from groq import Groq  # imported lazily so tests do not need the package
 
         # max_retries=0: fail fast and let our own model chain decide what to try next.
-        self._client = Groq(api_key=api_key, timeout=REQUEST_TIMEOUT_S, max_retries=0)
+        self._client = Groq(api_key=api_key, timeout=timeout_s, max_retries=0)
         self._models = [m for m in models if m]
         self._reasoning = reasoning
         self._max_tokens = max_tokens or MAX_TOKENS_BY_REASONING.get(reasoning, 700)
@@ -65,19 +66,19 @@ class GroqTalker:
         return raw.parse()
 
     def reply(self, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None) -> Reply:
-        last_error = "NoModelConfigured"
+        last_error, last_code = "NoModelConfigured", None
         for model in self._models:
             try:
                 response = self._complete(model, system, messages, tools)
             except Exception as exc:  # SDK errors never carry the key; keep only type and code
                 code = getattr(exc, "status_code", None)
-                last_error = f"{type(exc).__name__}:{code}"
+                last_error, last_code = f"{type(exc).__name__}:{code}", code
                 if code in NO_FALLBACK_CODES:
                     break
                 continue
             choices = getattr(response, "choices", None) or []
             if not choices:
-                last_error = "EmptyResponse"
+                last_error, last_code = "EmptyResponse", None
                 continue
             calls = getattr(choices[0].message, "tool_calls", None) or []
             if calls:
@@ -94,11 +95,11 @@ class GroqTalker:
                     tool_call=ToolCall(function.name, arguments if isinstance(arguments, dict) else {}),
                 )
             if getattr(choices[0], "finish_reason", None) == "length":  # cut mid-sentence
-                last_error = "MaxTokens"
+                last_error, last_code = "MaxTokens", None
                 continue
             text = (choices[0].message.content or "").strip()
             if not text:
-                last_error = "EmptyResponse"
+                last_error, last_code = "EmptyResponse", None
                 continue
             usage = response.usage
             return Reply(
@@ -106,4 +107,4 @@ class GroqTalker:
                 getattr(usage, "prompt_tokens", 0) or 0,
                 getattr(usage, "completion_tokens", 0) or 0,
             )
-        raise TalkerError(last_error)
+        raise TalkerError(last_error, last_code)

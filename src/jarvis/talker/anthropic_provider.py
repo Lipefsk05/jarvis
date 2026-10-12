@@ -5,10 +5,10 @@ from .base import Reply, TalkerError, ToolCall, to_anthropic_tools
 
 
 class AnthropicTalker:
-    def __init__(self, api_key: str, model: str, max_tokens: int = 400) -> None:
+    def __init__(self, api_key: str, model: str, max_tokens: int = 400, timeout_s: float = 15.0) -> None:
         import anthropic  # imported lazily so tests do not need the package
 
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s, max_retries=0)
         self._model = model
         self._max_tokens = max_tokens
 
@@ -23,7 +23,7 @@ class AnthropicTalker:
                 **extra,
             )
         except Exception as exc:  # SDK errors never carry the key; keep only the type
-            raise TalkerError(type(exc).__name__) from exc
+            raise TalkerError(type(exc).__name__, getattr(exc, "status_code", None)) from exc
         for block in response.content:
             if getattr(block, "type", None) == "tool_use":
                 arguments = block.input if isinstance(block.input, dict) else {}

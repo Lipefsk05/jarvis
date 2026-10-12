@@ -3,19 +3,20 @@ from __future__ import annotations
 
 from .base import Reply, TalkerError, ToolCall
 
-REQUEST_TIMEOUT_MS = 15000
+REQUEST_TIMEOUT_S = 15.0
 # Auth/validation problems will not be fixed by trying another model.
 NO_FALLBACK_CODES = {400, 401, 403}
 
 
 class GeminiTalker:
-    def __init__(self, api_key: str, models: list[str], max_tokens: int = 400) -> None:
+    def __init__(self, api_key: str, models: list[str], max_tokens: int = 400,
+                 timeout_s: float = REQUEST_TIMEOUT_S) -> None:
         from google import genai  # imported lazily so tests do not need the package
         from google.genai import types
 
         self._types = types
         self._client = genai.Client(
-            api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS)
+            api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000))
         )
         self._models = [m for m in models if m]
         self._max_tokens = max_tokens
@@ -58,20 +59,20 @@ class GeminiTalker:
             )
             for m in messages
         ]
-        last_error = "NoModelConfigured"
+        last_error, last_code = "NoModelConfigured", None
         for model in self._models:
             try:
                 response = self._generate(model, system, contents, tools)
             except Exception as exc:  # SDK errors never carry the key; keep only type and code
                 code = getattr(exc, "code", None)
-                last_error = f"{type(exc).__name__}:{code}"
+                last_error, last_code = f"{type(exc).__name__}:{code}", code
                 if code in NO_FALLBACK_CODES:
                     break
                 continue
             candidates = getattr(response, "candidates", None) or []
             finish = str(getattr(candidates[0], "finish_reason", "")) if candidates else ""
             if "MAX_TOKENS" in finish:  # a sentence cut in half is worse than trying another model
-                last_error = "MaxTokens"
+                last_error, last_code = "MaxTokens", None
                 continue
             calls = getattr(response, "function_calls", None) or []
             if calls:
@@ -79,10 +80,10 @@ class GeminiTalker:
                 return Reply("", *self._tokens(response), tool_call=ToolCall(calls[0].name, dict(args) if args else {}))
             text = (response.text or "").strip()
             if not text:
-                last_error = "EmptyResponse"
+                last_error, last_code = "EmptyResponse", None
                 continue
             return Reply(text, *self._tokens(response))
-        raise TalkerError(last_error)
+        raise TalkerError(last_error, last_code)
 
     @staticmethod
     def _tokens(response) -> tuple[int, int]:

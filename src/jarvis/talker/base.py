@@ -6,7 +6,11 @@ from typing import Protocol
 
 
 class TalkerError(Exception):
-    """The provider call failed. Message must never contain secrets."""
+    """The provider call failed. Message must never contain secrets. `code` is the HTTP status when there was one."""
+
+    def __init__(self, message: str, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
