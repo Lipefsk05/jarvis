@@ -27,7 +27,9 @@ COMMANDS = (
             '"hoje às 19 reunião, 10 min antes" avisa com antecedência; "daqui a 2 horas" também vale. '
             'Repete com "todo dia às 8 da manhã tomar remédio", "toda segunda às 9 reunião" ou "nos dias úteis às 8 standup". '
             'Em vários dias: "toda segunda e quarta às 7 treinar". Se faltar a hora, ou se disser só "de manhã" ou "à tarde", eu pergunto; '
-            'se parecer algo de rotina (remédio, academia), pergunto se repete.'),
+            'se parecer algo de rotina (remédio, academia), pergunto se repete. '
+            'Diga quanto dura ("treinar às 9 por 2 horas" ou "das 9 às 11") e eu aviso antes de marcar se bater com outro lembrete; '
+            'sem duração, aviso quando já houver algo a menos de 1 hora.'),
     Command("lembretes", "", "Lista os lembretes pendentes",
             "lista os lembretes pendentes, com o número de cada um."),
     Command("cancela", "<número>", "Cancela um lembrete",

@@ -39,6 +39,7 @@ class Planned:
     lead_minutes: int
     hour_assumed: bool
     repeat: str | None = None  # "daily" | "weekdays" | "weekly"
+    duration: int = 0  # minutes it takes ("por 2 horas", "das 9 às 11"); 0 = not said
 
 
 # Things people usually do again and again: a one-off reminder about them is probably meant to repeat.
@@ -54,6 +55,69 @@ REPEAT_QUESTION = Ask(
     "Isso parece algo de rotina, senhor. Quer que eu repita? Diga \"todo dia\", \"dias úteis\", \"toda segunda e quarta\"..., "
     "ou \"só desta vez\".",
 )
+
+
+_HOUR_WORD = "|".join(HOUR_WORDS)
+_AMOUNT = rf"(?:\d+|{_HOUR_WORD}|meia)"
+_CLOCK = r"\d{1,2}(?:(?::|h)\d{2})?h?"
+_RANGE = re.compile(
+    rf"\b(?:das|desde as|de) (?P<a>{_CLOCK})(?: ?(?:as|a|ate as|ate|-) ?)(?P<b>{_CLOCK})"
+    r"(?P<p> (?:da|de|na|no) (?:manha|tarde|noite|madrugada))?\b"
+)
+_NOT_A_RANGE = re.compile(r"\bde \d+ a \d+ (?:horas|dias|pessoas|vezes|reais|anos|km|kg)\b")
+_FOR = re.compile(
+    rf"\b(?:por|durante|dura|durando|que dura|com duracao de) (?P<n>{_AMOUNT})(?: ?(?P<u>horas?|h|minutos?|min)(?P<hm>\d{{2}})?)?"
+    r"(?: e (?P<f>meia|\d{1,2}(?: ?min\w*)?))?\b"
+)
+MAX_DURATION = 24 * 60
+
+
+def _clock_minutes(token: str) -> int:
+    match = re.match(r"(\d{1,2})(?:[:h](\d{2}))?", token)
+    return int(match.group(1)) * 60 + int(match.group(2) or 0)
+
+
+def _range_end(start: int, end: int, period: str) -> int | None:
+    """Minutes from the start to the end of "das 9 às 11"; the end borrows "da tarde" and may be an afternoon hour."""
+    if period.endswith(("tarde", "noite")):
+        start, end = (start + 720 if start < 720 else start), (end + 720 if end < 720 else end)
+    if end <= start and end < 720 and end + 720 - start <= 8 * 60:
+        end += 720  # "das 10 às 2": the afternoon
+    return end - start if end > start else None
+
+
+def take_duration(raw: str) -> tuple[str, int, Ask | None]:
+    """Find how long the thing lasts and take those words out: "treinar às 9 por 2 horas", "das 9 às 11 treinar".
+    Returns (the sentence without them, minutes (0 = not said), a question if it makes no sense)."""
+    folded = fold(raw)  # same length as `raw`, so spans carry over
+    match = _RANGE.search(folded)
+    if match and not _NOT_A_RANGE.search(folded):
+        start, end = _clock_minutes(match.group("a")), _clock_minutes(match.group("b"))
+        minutes = _range_end(start, end, (match.group("p") or "").strip())
+        if minutes is None:
+            return raw, 0, Ask("invalido", "O fim vem antes do começo, senhor. Pode repetir o horário?")
+        said = f"às {start // 60}" + (f"h{start % 60:02d}" if start % 60 else "")
+        return raw[:match.start()] + said + (match.group("p") or "") + raw[match.end():], min(minutes, MAX_DURATION), None
+    match = _FOR.search(folded)
+    if match:
+        number, unit, fraction = match.group("n"), match.group("u") or "", match.group("f")
+        if not unit and number != "meia":
+            return raw, 0, None  # "por 2" alone is not a duration
+        if number == "meia":
+            minutes = 30
+        else:
+            amount = int(number) if number.isdigit() else HOUR_WORDS[number]
+            minutes = amount * (60 if unit.startswith("h") else 1)
+        if match.group("hm"):
+            minutes += int(match.group("hm"))  # "1h30"
+        if fraction:
+            minutes += 30 if fraction == "meia" else int(re.match(r"\d+", fraction).group(0))
+        if minutes <= 0:
+            return raw, 0, None
+        if minutes > MAX_DURATION:
+            return raw, 0, Ask("invalido", "Essa duração é longa demais, senhor. Pode repetir?")
+        return (raw[:match.start()] + " " + raw[match.end():]).strip(), minutes, None
+    return raw, 0, None
 
 
 def _repeat_question(text: str, said: str) -> Ask | None:
@@ -276,7 +340,7 @@ def is_only_when(side: str) -> bool:
 
 
 def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: int | None = None,
-               repeat: str | None = None, ask_repeat: bool = True) -> Planned | PlannedSeries | Ask:
+               repeat: str | None = None, ask_repeat: bool = True, duration: int = 0) -> Planned | PlannedSeries | Ask:
     """Plan a reminder whose pieces are already separated (what, when in words, minutes of advance).
     A repeat can come in `repeat` or inside `phrase` ("todo dia às 9")."""
     if repeat is None:
@@ -284,7 +348,7 @@ def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: i
         if found.ask:
             return found.ask
         if found.days:
-            return _per_day(found.days, lambda day: (text, f"{day} {found.rest}", lead), now, default_hour)
+            return _per_day(found.days, lambda day: (text, f"{day} {found.rest}", lead), now, default_hour, duration)
         phrase, repeat = found.rest, found.repeat
     if not text.strip():
         return Ask("texto", "O que devo lembrar, senhor?")
@@ -300,7 +364,7 @@ def plan_parts(text: str, phrase: str, lead: int, now: datetime, default_hour: i
             "passou",
             f"Com {human_minutes(lead)} de antecedência o aviso já teria passado, senhor. Para quando devo marcar?",
         )
-    planned = Planned(text.strip(), due, anchor if lead else None, lead, when.hour_assumed, repeat)
+    planned = Planned(text.strip(), due, anchor if lead else None, lead, when.hour_assumed, repeat, duration)
     if ask_repeat and repeat is None:
         return _repeat_question(planned.text, phrase) or planned
     return planned
@@ -313,14 +377,14 @@ def _no_time(repeat: str | None, now: datetime) -> Ask:
     return parse("", now)  # the standard "para quando devo marcar?" question
 
 
-def _per_day(days: tuple[str, ...], pieces, now: datetime, default_hour: int | None) -> PlannedSeries | Ask:
+def _per_day(days: tuple[str, ...], pieces, now: datetime, default_hour: int | None, duration: int = 0) -> PlannedSeries | Ask:
     """One weekly reminder per weekday. `pieces(day)` gives (text, when phrase, lead minutes) for that day."""
     items = []
     for day in days:
         text, phrase, lead = pieces(day)
         if not phrase:
             return _no_time(WEEKLY, now)
-        planned = plan_parts(text, phrase, lead, now, default_hour, WEEKLY)
+        planned = plan_parts(text, phrase, lead, now, default_hour, WEEKLY, duration=duration)
         if isinstance(planned, Ask):
             return planned
         items.append(planned)
@@ -330,17 +394,20 @@ def _per_day(days: tuple[str, ...], pieces, now: datetime, default_hour: int | N
 def plan_reminder(raw: str, now: datetime, default_hour: int | None = None,
                   ask_repeat: bool = True) -> Planned | PlannedSeries | Ask:
     """Plan a reminder from one free sentence (the /lembra command and "me lembra ...")."""
+    raw, duration, ask = take_duration(raw)
+    if ask:
+        return ask
     found = extract(raw)
     if found.ask:
         return found.ask
     if found.days:
-        return _per_day(found.days, lambda day: split_request(f"{day} {found.rest}"), now, default_hour)
+        return _per_day(found.days, lambda day: split_request(f"{day} {found.rest}"), now, default_hour, duration)
     if has_many_times(found.rest):
         return MANY_TIMES
     text, phrase, lead = split_request(found.rest)
     if not phrase:
         return _no_time(found.repeat, now)
-    planned = plan_parts(text, phrase, lead, now, default_hour, found.repeat, ask_repeat=False)
+    planned = plan_parts(text, phrase, lead, now, default_hour, found.repeat, ask_repeat=False, duration=duration)
     if ask_repeat and isinstance(planned, Planned) and planned.repeat is None:
         return _repeat_question(planned.text, raw) or planned
     return planned

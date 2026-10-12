@@ -43,6 +43,7 @@ class _BotCase(unittest.TestCase):
         callbacks = {h.callback.__name__: h.callback for group in self.app.handlers.values() for h in group
                      if hasattr(h, "callback")}
         self.on_text, self.on_remind = callbacks["on_text"], callbacks["on_remind"]
+        self.on_list = callbacks["on_reminders"]
         self.replies = []
 
     def say(self, handler, text):
@@ -114,6 +115,52 @@ class BotReminderConversationTest(_BotCase):
     def test_a_series_is_all_or_nothing(self):
         self.text("me lembra toda segunda e quarta às 7 de enviar o relatório")
         self.assertEqual(len(self.stored()), 2)
+
+
+@unittest.skipUnless(HAS_TELEGRAM, "python-telegram-bot not installed")
+class BotClashTest(_BotCase):
+    """The Felipe's own example: training at 9 for two hours, then something at 10."""
+
+    def training(self):
+        self.assertIn("rotina", self.text("me lembra amanhã às 9 de treinar por 2 horas"))
+        reply = self.text("só dessa vez")
+        self.assertIn("Marcado", reply)
+        self.assertIn("Dura 2 horas", reply)
+
+    def test_the_duration_is_stored_and_listed(self):
+        self.training()
+        self.assertEqual([i["duration"] for i in self.stored()], [120])
+        self.assertIn("dura 2 horas", self.say(self.on_list, "/lembretes"))
+
+    def test_a_clash_is_asked_before_marking_and_yes_marks(self):
+        self.training()
+        question = self.text("me lembra amanhã às 10 de ligar pro Pedro")
+        self.assertIn("“treinar” vai de 09:00 até 11:00", question)
+        self.assertIn("Marco mesmo assim", question)
+        self.assertEqual(len(self.stored()), 1)  # nothing stored while the question is open
+        self.assertIn("Marcado", self.text("sim"))
+        self.assertEqual(sorted(i["text"] for i in self.stored()), ["ligar pro Pedro", "treinar"])
+
+    def test_no_marks_nothing(self):
+        self.training()
+        self.text("me lembra amanhã às 10 de ligar pro Pedro")
+        self.assertIn("não marquei nada", self.text("não"))
+        self.assertEqual([i["text"] for i in self.stored()], ["treinar"])
+
+    def test_another_time_that_fits_is_marked(self):
+        self.training()
+        self.text("me lembra amanhã às 10 de ligar pro Pedro")
+        self.assertIn("Marcado", self.text("às 11"))
+        self.assertEqual(sorted(i["due"][11:16] for i in self.stored()), ["09:00", "11:00"])
+
+    def test_close_events_without_a_duration_ask_whether_they_fit(self):
+        self.text("me lembra amanhã às 9 de ligar pro Carlos")
+        question = self.text("me lembra amanhã às 10 de ligar pro Pedro")
+        self.assertIn("Dá tempo dos dois", question)
+
+    def test_events_far_apart_are_marked_without_a_question(self):
+        self.text("me lembra amanhã às 9 de ligar pro Carlos")
+        self.assertIn("Marcado", self.text("me lembra amanhã às 15 de ligar pro Pedro"))
 
 
 @unittest.skipUnless(HAS_TELEGRAM, "python-telegram-bot not installed")

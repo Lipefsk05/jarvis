@@ -73,7 +73,7 @@ def build_application(settings: Settings) -> Application:
     gate = HumorGate()
     history = History(settings.history_messages, settings.state_dir / "conversa.json")
     reminders = ReminderStore(settings.state_dir / "lembretes.json")
-    flow = ReminderFlow()
+    flow = ReminderFlow(pending=reminders.pending)
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
@@ -237,7 +237,8 @@ def build_application(settings: Settings) -> Application:
             await store_series(message, chat_id, planned)
             return
         try:
-            reminder = reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat)
+            reminder = reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat,
+                                     duration=planned.duration)
         except ReminderError as exc:
             await message.reply_text(str(exc))
             return
@@ -251,7 +252,8 @@ def build_application(settings: Settings) -> Application:
         stored = []
         try:
             for planned in series.items:
-                stored.append(reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat))
+                stored.append(reminders.add(planned.text, planned.due, now, event=planned.event, repeat=planned.repeat,
+                                            duration=planned.duration))
         except ReminderError as exc:
             for reminder in stored:  # all or nothing: do not leave half of the days marked
                 reminders.cancel(reminder.id, now)

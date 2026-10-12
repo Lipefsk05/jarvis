@@ -111,6 +111,8 @@ def confirmation(reminder: Reminder, now: datetime, hour_assumed: bool = False) 
         text = f"Marcado, senhor (lembrete {reminder.id}): {describe(reminder.due, now)}, {_body(reminder.text)}."
     if reminder.repeat:
         text += f" Repito {label(reminder.repeat, reminder.event or reminder.due)}."
+    if reminder.duration:
+        text += f" Dura {human_minutes(reminder.duration)}."
     if hour_assumed:
         text += (f" Não disse a hora, então assumi {reminder.due:%H:%M}; se preferir outra, "
                  f"cancele com /cancela {reminder.id} e marque de novo.")
@@ -126,6 +128,8 @@ def series_confirmation(reminders: list[Reminder], now: datetime, hour_assumed: 
         )
     days = " e ".join(label(r.repeat, r.due) for r in reminders)
     text = f"Marcado, senhor (lembretes {numbers}): {days} às {reminders[0].due:%H:%M}, {_body(reminders[0].text)}."
+    if reminders[0].duration:
+        text += f" Dura {human_minutes(reminders[0].duration)}."
     if hour_assumed:
         text += (f" Não disse a hora, então assumi {reminders[0].due:%H:%M}; se preferir outra, "
                  f"cancele com /cancela {reminders[0].id} e /cancela {reminders[-1].id} e marque de novo.")
@@ -141,7 +145,8 @@ def listing(items: list[Reminder], now: datetime) -> str:
     for r in items:
         extra = f" (aviso; evento às {r.event:%H:%M})" if r.event else ""
         again = f" (repete {label(r.repeat, r.event or r.due)})" if r.repeat else ""
-        lines.append(f"{r.id}. {describe(r.due, now)}{extra}{again} — {_body(r.text)}")
+        lasts = f" (dura {human_minutes(r.duration)})" if r.duration else ""
+        lines.append(f"{r.id}. {describe(r.due, now)}{extra}{again}{lasts} — {_body(r.text)}")
     lines.append("")
     lines.append("Para cancelar: /cancela <número>.")
     return "\n".join(lines)

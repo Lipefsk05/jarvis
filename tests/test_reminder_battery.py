@@ -702,7 +702,6 @@ class HardSentencesTest(unittest.TestCase):
         "me lembra amanhã às 9 e às 15 de ligar": "varios",
         "me lembra amanhã às 9 ou 10 de ligar": "varios",
         "me lembra de ligar pro Carlos amanhã às 9 e pro Pedro às 10": "varios",
-        "me lembra das 8 às 10 de ligar": "varios",
         "me lembra em 5 minutos": "texto",
         "me lembra às 24h de ligar": "invalido",
         "me lembra na próxima semana de ligar": "entendi",

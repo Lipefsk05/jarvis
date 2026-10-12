@@ -20,6 +20,7 @@ CLOSING = (SENT, LATE, LOST)
 MAX_TEXT_CHARS = 500
 MAX_PENDING = 200
 KEEP_CLOSED_DAYS = 30
+MAX_DURATION_MINUTES = 24 * 60
 
 
 class ReminderError(ValueError):
@@ -36,12 +37,14 @@ class Reminder:
     closed: datetime | None = None
     event: datetime | None = None  # when the thing happens, if `due` is an advance warning before it
     repeat: str | None = None  # "daily" | "weekdays" | "weekly": delivering it schedules the next one
+    duration: int = 0  # minutes the thing takes ("treinar por 2 horas"); 0 = unknown, a point in time
 
     def to_json(self) -> dict:
         return {
             "id": self.id, "text": self.text, "due": self.due.isoformat(), "status": self.status,
             "created": self.created.isoformat(), "closed": self.closed.isoformat() if self.closed else None,
             "event": self.event.isoformat() if self.event else None, "repeat": self.repeat,
+            "duration": self.duration,
         }
 
     @staticmethod
@@ -52,7 +55,7 @@ class Reminder:
             status=str(raw["status"]), created=datetime.fromisoformat(raw["created"]),
             closed=datetime.fromisoformat(closed) if closed else None,
             event=datetime.fromisoformat(event) if event else None,
-            repeat=raw.get("repeat") or None,
+            repeat=raw.get("repeat") or None, duration=int(raw.get("duration") or 0),
         )
 
 
@@ -107,7 +110,7 @@ class ReminderStore:
             log.warning("Could not save reminders to %s", self._path)
 
     def add(self, text: str, due: datetime, now: datetime, event: datetime | None = None,
-            repeat: str | None = None) -> Reminder:
+            repeat: str | None = None, duration: int = 0) -> Reminder:
         """Store a reminder. Asking for the same text at the same time again returns the existing one.
         `event` is set when `due` is an advance warning ("10 minutes before"); `repeat` makes it a series."""
         _aware(due, "due"), _aware(now, "now")
@@ -123,7 +126,8 @@ class ReminderStore:
                 return item
         if len(self.pending()) >= MAX_PENDING:
             raise ReminderError("Há lembretes demais pendentes, senhor. Cancele alguns antes de criar outro.")
-        reminder = Reminder(self._next_id, text, due, PENDING, now, event=event, repeat=repeat)
+        reminder = Reminder(self._next_id, text, due, PENDING, now, event=event, repeat=repeat,
+                            duration=max(0, min(int(duration), MAX_DURATION_MINUTES)))
         self._next_id += 1
         self._items[reminder.id] = reminder
         self._save(now)
