@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from .when import HOUR_WORDS, MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
+from .when import HOUR_WORDS, MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, _find_time, parse
 from .reminder_text import human_minutes
 from .repeat import WEEKLY, align_first, extract
 
@@ -252,3 +252,14 @@ def plan_from_words(user_text: str, model_text: str, model_when: str, lead: int,
     if isinstance(planned, PlannedSeries):
         return PlannedSeries(tuple(replace(item, text=model_text) for item in planned.items))
     return replace(planned, text=model_text)
+
+
+def is_schedule(text: str) -> bool:
+    """A sentence that is a repeating schedule with a clock time ("toda terça e sexta academia às 15"). It carries
+    no "me lembra", but a repeat plus an exact hour is almost always a request for a reminder, so the code makes it."""
+    found = extract(text)
+    if found.ask or found.repeat is None:
+        return False
+    _, phrase, _ = split_request(found.rest)
+    time, _, error = _find_time(phrase) if phrase else (None, False, None)
+    return time is not None and error is None

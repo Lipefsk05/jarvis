@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from jarvis.commands import parse_reminder_request
-from jarvis.reminder_request import Planned, PlannedSeries, plan_from_words, plan_reminder
+from jarvis.reminder_request import Planned, PlannedSeries, is_schedule, plan_from_words, plan_reminder
 from jarvis.when import Ask
 
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -133,3 +133,24 @@ class ModelDroppedDetailsTest(unittest.TestCase):
         got = plan_from_words("me lembra amanhã de buscar o bolo", "buscar o bolo", "amanhã às 9", 0, NOW, None)
         self.assertIsInstance(got, Ask)
         self.assertEqual(got.kind, "hora")
+
+
+class ScheduleSentenceTest(unittest.TestCase):
+    def test_repeat_plus_an_exact_hour_is_a_reminder(self):
+        for sentence in ("Toda terça e sexta academia as 15", "todo dia às 7 acordar", "todos os dias as 13: Oração",
+                         "nos dias úteis às 8:30 standup", "toda segunda a sexta às 7 da manhã treinar",
+                         "Toda terça e sexta academia às três da tarde"):
+            with self.subTest(sentence):
+                self.assertTrue(is_schedule(sentence))
+
+    def test_anything_less_is_left_to_the_model(self):
+        for sentence in ("tenho dentista amanhã às 14", "toda terça eu vou à academia", "toda noite eu estudo",
+                         "todo mês dia 5 pagar o cartão às 9", "a cada 2 horas beber água às 8", "oi, tudo bem?",
+                         "o que tenho de tarefa toda semana?"):
+            with self.subTest(sentence):
+                self.assertFalse(is_schedule(sentence))
+
+    def test_the_sentence_becomes_one_reminder_per_day(self):
+        got = plan_reminder("Toda terça e sexta academia as 15", NOW, 9)
+        self.assertIsInstance(got, PlannedSeries)
+        self.assertEqual([(i.due.day, i.due.hour, i.text) for i in got.items], [(13, 15, "academia"), (16, 15, "academia")])

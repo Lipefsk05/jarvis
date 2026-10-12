@@ -32,7 +32,7 @@ from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminder_request import PlannedSeries, plan_from_words, plan_parts, plan_reminder
+from .reminder_request import PlannedSeries, is_schedule, plan_from_words, plan_parts, plan_reminder
 from .reminder_text import confirmation, listing, series_confirmation
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -163,6 +163,9 @@ def build_application(settings: Settings) -> Application:
         remind = parse_reminder_request(text)
         if remind is not None:  # "me lembra de ..." is handled by code too: validated date, no invention
             await create_reminder(message, chat_id, remind)
+            return
+        if is_schedule(text):  # "toda terça e sexta academia às 15": a repeat and an hour are a request, no model needed
+            await create_reminder(message, chat_id, text)
             return
         if asks_capabilities(text):  # the list comes from code, so it is always complete and right
             await send_help(message)
