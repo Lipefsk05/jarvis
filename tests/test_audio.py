@@ -62,3 +62,22 @@ class TranscriptLineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhisperHintTest(unittest.TestCase):
+    def test_the_transcription_gets_a_vocabulary_hint(self):
+        from types import SimpleNamespace
+
+        from jarvis.audio import PROMPT, GroqTranscriber
+
+        seen = {}
+
+        def create(**kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(text="Me lembra amanhã às 9")
+
+        client = SimpleNamespace(audio=SimpleNamespace(transcriptions=SimpleNamespace(create=create)))
+        GroqTranscriber("k", client=client).transcribe("voz.ogg", b"x")
+        self.assertEqual(seen["prompt"], PROMPT)
+        self.assertIn("me lembra", PROMPT.lower())
+        self.assertLess(len(PROMPT), 400)  # Whisper reads only the end of a long prompt

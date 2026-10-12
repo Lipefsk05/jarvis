@@ -86,3 +86,42 @@ class IsYesTest(unittest.TestCase):
         for text in ("", "não", "sim mas amanhã às 9", "me lembra de pagar a luz", "pode anotar que preciso de pão",
                      "sim, e quanto gastei hoje?", "nao quero", "me lembra amanhã", "claro que não"):
             self.assertFalse(is_yes(text), text)
+
+
+class IntentGatesTest(unittest.TestCase):
+    def test_actions_that_change_things_need_the_users_words(self):
+        from jarvis.commands import has_intent
+
+        yes = {
+            "cancelar_lembrete": ["cancela o lembrete 3", "apaga o lembrete do dentista", "desmarca o treino", "remove o 3", "esquece o lembrete"],
+            "listar_lembretes": ["quais são meus lembretes?", "o que eu tenho marcado?", "lista os lembretes", "meus compromissos"],
+            "limpar_conversa": ["esquece a conversa", "limpa tudo", "vamos recomeçar", "zera isso"],
+            "anotar": ["anota que preciso de pão", "não esquece de ligar", "guarda isso", "registra aí", "sim", "pode"],
+        }
+        no = {
+            "cancelar_lembrete": ["treinar amanhã de manhã", "Me lembro amanhã às 10", "banana", "tenho dentista amanhã"],
+            "listar_lembretes": ["banana", "treinar amanhã de manhã", "oi"],
+            "limpar_conversa": ["banana", "treinar amanhã"],
+            "anotar": ["o pão acabou", "treinar amanhã de manhã"],
+        }
+        for action, texts in yes.items():
+            for text in texts:
+                self.assertTrue(has_intent(action, text), (action, text))
+        for action, texts in no.items():
+            for text in texts:
+                self.assertFalse(has_intent(action, text), (action, text))
+        for harmless in ("consultar_tarefas", "ver_gasto", "mostrar_ajuda", "criar_lembrete"):
+            self.assertTrue(has_intent(harmless, "qualquer coisa"))
+
+
+class MisheardReminderTest(unittest.TestCase):
+    def test_me_lembro_with_a_time(self):
+        from jarvis.reminder_request import parse_misheard_request
+
+        for text in ("Me lembro amanhã às nove de treinar por duas horas.", "Me lembro amanhã às 10 de correr.",
+                     "me lembro todo dia às 8 de tomar remédio", "Jarvis, me lembro daqui a 10 minutos de ver o bolo",
+                     "pode me lembro amanhã às 9 de ligar"):
+            self.assertIsNotNone(parse_misheard_request(text), text)
+        for text in ("me lembro que ontem às 9 eu fui lá", "me lembro de tudo", "me lembro quando era criança",
+                     "me lembro", "me lembro disso", "me lembra amanhã às 9"):
+            self.assertIsNone(parse_misheard_request(text), text)

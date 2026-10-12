@@ -164,6 +164,66 @@ class BotClashTest(_BotCase):
 
 
 @unittest.skipUnless(HAS_TELEGRAM, "python-telegram-bot not installed")
+class BotVoiceAndGatesTest(_BotCase):
+    """What went wrong on the phone with voice: "Me lembro" for "Me lembra", and the model calling a tool nobody asked for."""
+
+    def model_calls(self, name, **arguments):
+        from unittest import mock
+
+        from jarvis.talker.base import Reply, ToolCall
+        from jarvis.talker.groq_provider import GroqTalker
+
+        call = ToolCall(name, arguments)
+        return mock.patch.object(GroqTalker, "reply", lambda self, system, messages, tools=None: Reply("", 10, 5, tool_call=call))
+
+    def test_me_lembro_with_a_time_is_a_reminder_request(self):
+        # no model is faked here: a call to the model would fail the test (401), so it must be handled by code
+        for said in ("Me lembro amanhã às nove de ligar pro Carlos.", "Me lembro amanhã às 15 de ligar pro Carlos."):
+            with self.subTest(said):
+                self.assertIn("Marcado", self.text(said))
+        self.assertEqual(len(self.stored()), 2)
+
+    def test_the_voice_example_asks_if_it_repeats(self):
+        self.assertIn("rotina", self.text("Me lembro amanhã às nove de treinar por duas horas."))
+        self.assertIn("Dura 2 horas", self.text("só dessa vez"))
+
+    def test_a_garbled_hour_is_asked_not_guessed(self):
+        self.assertIn("Que horas", self.text("Me lembra amanhã as ideias de ligar pro Carlos?"))
+        self.assertEqual(self.stored(), [])
+
+    def test_the_model_cancelling_without_being_asked_only_gets_a_question(self):
+        self.text("me lembra amanhã às 15 de ligar pro Carlos")
+        with self.model_calls("cancelar_lembrete", numero=1):
+            reply = self.text("treinar amanhã de manhã")
+        self.assertIn("Quer que eu cancele o lembrete 1", reply)
+        self.assertEqual(len(self.stored()), 1)  # nothing was cancelled
+        self.assertIn("cancelado", self.text("sim").lower())
+        self.assertEqual(self.stored(), [])
+
+    def test_cancelling_when_the_user_asked_is_done_at_once(self):
+        self.text("me lembra amanhã às 15 de ligar pro Carlos")
+        with self.model_calls("cancelar_lembrete", numero=1):
+            self.text("cancela o lembrete 1")
+        self.assertEqual(self.stored(), [])
+
+    def test_listing_without_being_asked_is_not_done(self):
+        with self.model_calls("listar_lembretes"):
+            reply = self.text("banana")
+        self.assertIn("Não tenho certeza", reply)
+
+    def test_listing_when_asked_is_done(self):
+        with self.model_calls("listar_lembretes"):
+            reply = self.text("quais são meus lembretes?")
+        self.assertIn("Não há lembretes", reply)
+
+    def test_a_note_nobody_asked_for_becomes_an_offer(self):
+        with self.model_calls("anotar", texto="comprar pão"):
+            reply = self.text("o pão acabou")
+        self.assertIn("Quer que eu anote", reply)
+        self.assertFalse(list((self.state / "inbox").glob("*")) if (self.state / "inbox").exists() else [])
+
+
+@unittest.skipUnless(HAS_TELEGRAM, "python-telegram-bot not installed")
 class BotModelPathTest(_BotCase):
     """The model (faked here) calls `criar_lembrete`; the bot must still read the time from the user's words."""
 

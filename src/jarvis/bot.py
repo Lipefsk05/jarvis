@@ -33,7 +33,7 @@ from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
 from .reminder_flow import Dropped, ReminderFlow
-from .reminder_request import PlannedSeries, is_schedule
+from .reminder_request import PlannedSeries, is_schedule, parse_misheard_request
 from .reminder_text import confirmation, listing, series_confirmation
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -164,6 +164,8 @@ def build_application(settings: Settings) -> Application:
             await save_note(message, note)
             return
         remind = parse_reminder_request(text)
+        if remind is None:
+            remind = parse_misheard_request(text)  # "Me lembro amanhã às 9 ...", as speech-to-text hears "me lembra"
         if remind is not None:  # "me lembra de ..." is handled by code too: validated date, no invention
             await create_reminder(message, chat_id, remind)
             return

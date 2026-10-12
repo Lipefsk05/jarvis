@@ -442,3 +442,21 @@ def is_schedule(text: str) -> bool:
     _, phrase, _ = split_request(found.rest)
     time, _, error = _find_time(phrase) if phrase else (None, False, None)
     return time is not None and error is None
+
+
+_MISHEARD = re.compile(r"^\s*(?:jarvis[\s,:]+)?(?:pode\s+)?me\s+(?:lembro|lembrei)\b[\s:,\-]*(.*)$", re.IGNORECASE | re.DOTALL)
+_PAST = re.compile(r"\b(?:ontem|anteontem|passad[oa]|fui|fiz|foi|era|estava|tinha|quando)\b")
+
+
+def parse_misheard_request(text: str) -> str | None:
+    """"Me lembro amanhã às 9 de treinar": speech-to-text often hears "me lembra" as "me lembro". It only counts as
+    a request when a time or a repeat comes with it (and nothing says it is a memory of the past)."""
+    match = _MISHEARD.match(text)
+    if not match:
+        return None
+    rest = match.group(1).strip()
+    if not rest or _PAST.search(fold(rest)):
+        return None
+    found = extract(rest)
+    _, phrase, _ = split_request(found.rest)
+    return rest if (phrase or found.repeat or found.days) else None

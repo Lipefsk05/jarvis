@@ -10,7 +10,7 @@ from typing import Callable
 
 from .actions import TOOLS, Action, parse_action
 from .budget import Budget
-from .commands import has_reminder_intent, is_yes, task_query_words, wants_tasks
+from .commands import has_intent, has_reminder_intent, is_yes, task_query_words, wants_tasks
 from .conversation import History
 from .humor import HumorGate
 from .mind import tasks_context
@@ -140,6 +140,23 @@ class Assistant:
         except OSError:
             return "(não consegui ler as tarefas do Mind agora)"
 
+    def _unsure(self, chat_id: int, action: Action, provider: str) -> AssistantReply:
+        """The model chose an action the user's words did not ask for: ask instead of doing it."""
+        if action.name == "cancelar_lembrete":
+            target = f"o lembrete {action.numero}" if action.numero else f"o lembrete sobre “{action.busca}”"
+            question = f"Quer que eu cancele {target}, senhor? Diga \"sim\" para confirmar."
+        elif action.name == "anotar":
+            preview = action.texto if len(action.texto) <= 60 else action.texto[:57] + "…"
+            question = f"Quer que eu anote “{preview}”, senhor? Diga \"sim\" para confirmar."
+        else:
+            question = ("Não tenho certeza do que o senhor quis dizer, senhor. Se é um lembrete, diga por exemplo "
+                        "\"me lembra amanhã às 10 de correr\".")
+            self._history.add(chat_id, "assistant", question)
+            return AssistantReply(question, provider=provider)
+        self._offers[chat_id] = (self._clock(), action)
+        self._history.add(chat_id, "assistant", question)
+        return AssistantReply(question, provider=provider)
+
     def respond(self, chat_id: int, text: str) -> AssistantReply:
         if not self._budget.can_spend():
             return AssistantReply(BLOCKED_MESSAGE, blocked=True)
@@ -170,6 +187,8 @@ class Assistant:
             self._offers[chat_id] = (self._clock(), action)
             self._history.add(chat_id, "assistant", question)
             return AssistantReply(question, provider=reply.provider)
+        if action is not None and not has_intent(action.name, text):
+            return self._unsure(chat_id, action, reply.provider)
         if action is not None:  # the system answers; any text the model also wrote is dropped
             return AssistantReply("", provider=reply.provider, action=action)
         clean, joked = split_joke(reply.text)

@@ -3,6 +3,10 @@ from __future__ import annotations
 
 MODEL = "whisper-large-v3-turbo"
 REQUEST_TIMEOUT_S = 60.0
+# Whisper hears "me lembra" as "me lembro" and "às 9" as "as ideias" without a hint. A short prompt with the words this
+# assistant hears all day biases the transcription toward them (it is a style guide, not an instruction).
+PROMPT = ("Jarvis, me lembra amanhã às 9 de treinar por 2 horas. Me avisa daqui a 10 minutos. Toda segunda e quarta "
+          "às 7 da manhã. Cancela o lembrete 3. Anota que preciso comprar pão.")
 MAX_SECONDS = 300           # a spoken message, not a podcast; also keeps the free audio quota safe
 MAX_BYTES = 20 * 1024 * 1024  # Telegram does not let bots download more than 20 MB anyway
 QUOTA_CODES = {429}
@@ -38,6 +42,7 @@ class GroqTranscriber:
         try:
             result = self._client.audio.transcriptions.create(
                 file=(filename, data), model=self._model, language="pt", response_format="json", temperature=0.0,
+                prompt=PROMPT,
             )
         except Exception as exc:  # SDK errors never carry the key; keep only type and code
             code = getattr(exc, "status_code", None)

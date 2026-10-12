@@ -67,6 +67,24 @@ def has_reminder_intent(text: str) -> bool:
     return bool(_REMINDER_INTENT.search(fold(text)))
 
 
+# The model picks the tool, but some tools change or hide things, so the code also wants the user's own words to
+# ask for it: a misheard "Me lembro amanhã às 10 de correr" once made the model call "cancelar_lembrete 18".
+_CANCEL_INTENT = re.compile(r"\b(?:cancel\w*|apag\w*|remov\w*|desmarc\w*|exclu\w*|delet\w*|esquec\w*|descart\w*|some\b|tir(?:a|e|ar)\b)")
+_LIST_INTENT = re.compile(r"\b(?:lembretes?|marcad\w*|agendad\w*|compromiss\w*|avisos?|pendentes?|o que (?:eu )?(?:tenho|tem|esta)|quais)\b")
+_CLEAR_INTENT = re.compile(r"\b(?:esquec\w*|limp\w*|recome\w*|zera\w*|apag\w*|comec\w* de novo)")
+_NOTE_INTENT = re.compile(r"\b(?:anot\w*|registr\w*|guard\w*|salv\w*|notas?|esquec\w*|memoriz\w*|nao deixa)")
+
+
+def has_intent(action: str, text: str) -> bool:
+    """Did the user's own words ask for this action? Only the actions that change things or may confuse are checked."""
+    folded = fold(text)
+    pattern = {"cancelar_lembrete": _CANCEL_INTENT, "listar_lembretes": _LIST_INTENT,
+               "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT}.get(action)
+    if pattern is None:
+        return True
+    return bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))
+
+
 _YES_WORDS = {
     "sim", "pode", "claro", "isso", "mesmo", "quero", "faz", "ok", "beleza", "blz", "bora", "manda", "ver", "pf", "pfv",
     "por", "favor", "me", "lembra", "lembre", "avisa", "avise", "jarvis", "senhor", "uhum", "aham", "positivo",

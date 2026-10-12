@@ -14,7 +14,7 @@ from typing import Callable
 from . import conflicts as clashes
 from .commands import is_yes, parse_reminder_request
 from .reminder_request import (
-    REPEAT_QUESTION, Planned, PlannedSeries, is_only_when, is_schedule, plan_from_words, plan_reminder, split_request,
+    REPEAT_QUESTION, Planned, PlannedSeries, is_only_when, is_schedule, parse_misheard_request, plan_from_words, plan_reminder, split_request,
 )
 from .repeat import WEEKLY, extract
 from .textutil import fold
@@ -112,7 +112,7 @@ class ReminderFlow:
         draft = self._drafts.pop(chat_id, None)
         if draft is None or now - draft.at > self._ttl:
             return None
-        if parse_reminder_request(message) is not None or is_schedule(message):  # a new request, not an answer
+        if parse_reminder_request(message) is not None or parse_misheard_request(message) is not None or is_schedule(message):  # a new request
             return None
         folded = fold(message).strip(" .!?,")
         if draft.kind == "conflito":
