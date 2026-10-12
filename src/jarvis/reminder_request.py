@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from .when import HOUR_WORDS, MONTHS, NUMBER_WORDS, WEEKDAYS, Ask, parse
@@ -237,3 +237,18 @@ def plan_reminder(raw: str, now: datetime, default_hour: int | None = None) -> P
     if not phrase:
         return parse("", now)  # the standard "para quando devo marcar?" question
     return plan_parts(text, phrase, lead, now, default_hour, found.repeat)
+
+
+def plan_from_words(user_text: str, model_text: str, model_when: str, lead: int, now: datetime,
+                    default_hour: int | None = None) -> Planned | PlannedSeries | Ask:
+    """A reminder the model chose to create. The model names WHAT to remember; WHEN is read from the user's
+    own words when they hold a time, because the model drops details ("terças e quintas" -> "terça", "duas da
+    tarde" -> nothing). Only when the user's words hold no time does the model's `quando` count."""
+    planned = plan_reminder(user_text, now, default_hour)
+    if isinstance(planned, Ask):
+        if planned.kind in {"entendi", "texto"}:  # no time found in what the user wrote
+            return plan_parts(model_text, model_when, lead, now, default_hour)
+        return planned  # a time was there but needs a question (hour, morning or evening, repeat)
+    if isinstance(planned, PlannedSeries):
+        return PlannedSeries(tuple(replace(item, text=model_text) for item in planned.items))
+    return replace(planned, text=model_text)

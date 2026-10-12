@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from jarvis.commands import parse_reminder_request
-from jarvis.reminder_request import Planned, PlannedSeries, plan_reminder
+from jarvis.reminder_request import Planned, PlannedSeries, plan_from_words, plan_reminder
 from jarvis.when import Ask
 
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -107,3 +107,29 @@ class SeriesConfirmationTest(unittest.TestCase):
         self.assertIn("toda segunda-feira e toda quarta-feira às 07:00", text)
         self.assertNotIn("assumi", text)
         self.assertIn("assumi 07:00", series_confirmation(items, NOW, hour_assumed=True))
+
+
+class ModelDroppedDetailsTest(unittest.TestCase):
+    """What the Groq model really sent on the phone: it kept the text but lost days and hours."""
+
+    def test_days_and_hour_come_from_the_users_words(self):
+        said = "Pode lembrar todas as terças e quintas de ir na aula de inglês às duas da tarde?"
+        got = plan_from_words(said, "ir na aula de inglês", "toda terça", 0, NOW, 9)
+        self.assertIsInstance(got, PlannedSeries)
+        self.assertEqual([(i.due.day, i.due.hour) for i in got.items], [(13, 14), (15, 14)])
+        self.assertTrue(all(i.text == "ir na aula de inglês" and i.repeat == "weekly" for i in got.items))
+
+    def test_single_reminder_keeps_the_models_text_and_the_users_time(self):
+        got = plan_from_words("me avisa amanhã às 7 que tem prova", "prova", "amanhã", 0, NOW, 9)
+        self.assertIsInstance(got, Planned)
+        self.assertEqual((got.text, got.due.day, got.due.hour), ("prova", 12, 7))
+
+    def test_falls_back_to_the_model_when_the_users_words_have_no_time(self):
+        got = plan_from_words("anota aí pra me avisar disso", "pagar a luz", "amanhã às 9", 0, NOW, 9)
+        self.assertIsInstance(got, Planned)
+        self.assertEqual((got.text, got.due.day, got.due.hour), ("pagar a luz", 12, 9))
+
+    def test_a_question_about_the_users_time_is_relayed(self):
+        got = plan_from_words("me lembra amanhã de buscar o bolo", "buscar o bolo", "amanhã às 9", 0, NOW, None)
+        self.assertIsInstance(got, Ask)
+        self.assertEqual(got.kind, "hora")

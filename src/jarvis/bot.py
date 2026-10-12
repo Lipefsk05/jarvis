@@ -32,7 +32,7 @@ from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
 from .outbox import Outbox, TelegramChannel
-from .reminder_request import PlannedSeries, plan_parts, plan_reminder
+from .reminder_request import PlannedSeries, plan_from_words, plan_parts, plan_reminder
 from .reminder_text import confirmation, listing, series_confirmation
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -110,8 +110,9 @@ def build_application(settings: Settings) -> Application:
         await message.reply_text(reply)
         assistant.remember(chat_id, reply)
 
-    async def run_action(message, chat_id: int, action) -> None:
-        """Execute what the model asked for. The text sent back is produced here, not by the model."""
+    async def run_action(message, chat_id: int, action, user_text: str = "") -> None:
+        """Execute what the model asked for. The text sent back is produced here, not by the model.
+        `user_text` is what the user wrote, when the model decided the action by itself (not after a \"yes\")."""
         if action.name == "anotar":
             path = await asyncio.to_thread(write_note, settings.inbox_dir, action.texto, clock(), "telegram")
             notes.add(path)
@@ -123,7 +124,11 @@ def build_application(settings: Settings) -> Application:
             await reply_tasks(message, task_query_words(action.area, min_len=3))
             assistant.remember(chat_id, "(Mostrei as pendências" + (f" de {action.area}" if action.area else "") + ".)")
         elif action.name == "criar_lembrete":
-            planned = plan_parts(action.texto, action.quando, action.antecedencia, clock(), settings.reminder_default_hour)
+            if user_text:  # when comes from the user's words: the model drops days and hours
+                planned = plan_from_words(user_text, action.texto, action.quando, action.antecedencia,
+                                          clock(), settings.reminder_default_hour)
+            else:
+                planned = plan_parts(action.texto, action.quando, action.antecedencia, clock(), settings.reminder_default_hour)
             await store_reminder(message, chat_id, planned)
         elif action.name == "listar_lembretes":
             await message.reply_text(listing(reminders.pending(), clock()))
@@ -168,7 +173,7 @@ def build_application(settings: Settings) -> Application:
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         reply = await asyncio.to_thread(assistant.respond, chat_id, text)
         if reply.action is not None:
-            await run_action(message, chat_id, reply.action)
+            await run_action(message, chat_id, reply.action, text)
         else:
             markup = feedback_markup() if reply.humor_offered else None
             await message.reply_text(reply.text, reply_markup=markup)
