@@ -30,6 +30,7 @@ class GroqFallbackTest(unittest.TestCase):
         talker = GroqTalker.__new__(GroqTalker)
         talker._models = list(outcomes)
         talker._max_tokens = 400
+        talker._reasoning = "low"
         talker.tried = []
         talker.system_seen = None
 
@@ -59,6 +60,13 @@ class GroqFallbackTest(unittest.TestCase):
         self.assertEqual(t._extra("openai/gpt-oss-120b"), {"reasoning_effort": "low"})
         self.assertEqual(t._extra("openai/gpt-oss-20b"), {"reasoning_effort": "low"})
         self.assertEqual(t._extra("qwen/qwen3.8-27b"), {})
+
+    def test_reasoning_level_is_configurable_and_widens_the_token_allowance(self):
+        from jarvis.talker.groq_provider import GroqTalker
+
+        t = GroqTalker("k", ["openai/gpt-oss-120b"], reasoning="medium")
+        self.assertEqual(t._extra("openai/gpt-oss-120b"), {"reasoning_effort": "medium"})
+        self.assertGreater(t._max_tokens, GroqTalker("k", ["m"], reasoning="low")._max_tokens)
 
     def test_tool_call_is_returned_with_parsed_arguments(self):
         message = SimpleNamespace(

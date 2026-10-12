@@ -28,21 +28,25 @@ def parse_limits(headers) -> dict | None:
     return limits if any(v is not None for v in limits.values()) else None
 
 
+# The thinking tokens count against max_tokens, so a deeper level needs a bigger allowance.
+MAX_TOKENS_BY_REASONING = {"low": 700, "medium": 1500, "high": 3000}
+
+
 class GroqTalker:
-    def __init__(self, api_key: str, models: list[str], max_tokens: int = 700) -> None:
+    def __init__(self, api_key: str, models: list[str], max_tokens: int | None = None, reasoning: str = "low") -> None:
         from groq import Groq  # imported lazily so tests do not need the package
 
         # max_retries=0: fail fast and let our own model chain decide what to try next.
         self._client = Groq(api_key=api_key, timeout=REQUEST_TIMEOUT_S, max_retries=0)
         self._models = [m for m in models if m]
-        self._max_tokens = max_tokens
+        self._reasoning = reasoning
+        self._max_tokens = max_tokens or MAX_TOKENS_BY_REASONING.get(reasoning, 700)
         self.limits: dict | None = None  # last limits reported by the API, for /uso
 
-    @staticmethod
-    def _extra(model: str) -> dict:
-        # gpt-oss models reason before answering and those tokens count against
-        # max_tokens; keep it minimal for a conversational assistant.
-        return {"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {}
+    def _extra(self, model: str) -> dict:
+        # gpt-oss models reason before answering and those tokens count against max_tokens and against the
+        # per-minute token limit; "low" keeps a conversational assistant fast.
+        return {"reasoning_effort": self._reasoning} if model.startswith("openai/gpt-oss") else {}
 
     def _complete(self, model: str, system: str, messages: list[dict[str, str]], tools: list[dict] | None = None):
         extra = self._extra(model)

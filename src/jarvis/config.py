@@ -60,6 +60,15 @@ def _hour(value: str | None, default: int) -> int:
     return hour if 0 <= hour <= 23 else default
 
 
+REASONING_LEVELS = ("low", "medium", "high")
+
+
+def _reasoning(value: str | None) -> str:
+    """How hard the Groq gpt-oss models think before answering; anything unknown falls back to the fast one."""
+    level = (value or "").strip().lower()
+    return level if level in REASONING_LEVELS else "low"
+
+
 def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
     if value is None or not value.strip():
         return DEFAULT_FALLBACKS.get(provider, ())
@@ -108,6 +117,7 @@ class Settings:
     history_messages: int
     timezone: str
     reminder_default_hour: int
+    groq_reasoning: str = "low"
 
     @classmethod
     def load(
@@ -144,6 +154,7 @@ class Settings:
             history_messages=int(values.get("JARVIS_HISTORY_MESSAGES") or 32),
             timezone=(values.get("JARVIS_TIMEZONE") or "America/Sao_Paulo").strip(),
             reminder_default_hour=_hour(values.get("JARVIS_REMINDER_DEFAULT_HOUR"), 9),
+            groq_reasoning=_reasoning(values.get("JARVIS_GROQ_REASONING")),
         )
 
     def key_for(self, provider: str) -> str:

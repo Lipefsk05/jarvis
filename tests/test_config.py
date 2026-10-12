@@ -44,6 +44,11 @@ class SettingsTest(unittest.TestCase):
         ok = self.load({"JARVIS_TALKER_PROVIDER": "groq", "GROQ_API_KEY": "k"})
         self.assertFalse(any("GROQ" in p for p in ok.problems()))
 
+    def test_groq_reasoning_defaults_to_low_and_ignores_unknown_values(self):
+        self.assertEqual(self.load({}).groq_reasoning, "low")
+        self.assertEqual(self.load({"JARVIS_GROQ_REASONING": "Medium"}).groq_reasoning, "medium")
+        self.assertEqual(self.load({"JARVIS_GROQ_REASONING": "ultra"}).groq_reasoning, "low")
+
     def test_mind_dir_and_inbox_default(self):
         s = self.load({"JARVIS_MIND_DIR": "/tmp/somevault"})
         self.assertEqual(str(s.mind_dir), "/tmp/somevault")

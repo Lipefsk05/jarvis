@@ -10,7 +10,7 @@ from .chain import ChainMember, ChainTalker
 log = logging.getLogger(__name__)
 
 
-def _build_one(provider: str, api_key: str, models: list[str]) -> Talker:
+def _build_one(provider: str, api_key: str, models: list[str], reasoning: str = "low") -> Talker:
     if provider == "anthropic":
         from .anthropic_provider import AnthropicTalker
 
@@ -22,7 +22,7 @@ def _build_one(provider: str, api_key: str, models: list[str]) -> Talker:
     if provider == "groq":
         from .groq_provider import GroqTalker
 
-        return GroqTalker(api_key, models)
+        return GroqTalker(api_key, models, reasoning=reasoning)
     raise ValueError(f"unknown provider: {provider}")
 
 
@@ -34,7 +34,7 @@ def build_talker(settings: Settings) -> ChainTalker:
         ChainMember(
             settings.provider,
             _build_one(settings.provider, settings.key_for(settings.provider),
-                       [settings.model, *settings.fallback_models]),
+                       [settings.model, *settings.fallback_models], settings.groq_reasoning),
             settings.price_in,
             settings.price_out,
         )
@@ -48,7 +48,7 @@ def build_talker(settings: Settings) -> ChainTalker:
         members.append(
             ChainMember(
                 provider,
-                _build_one(provider, key, [DEFAULT_MODELS[provider], *DEFAULT_FALLBACKS[provider]]),
+                _build_one(provider, key, [DEFAULT_MODELS[provider], *DEFAULT_FALLBACKS[provider]], settings.groq_reasoning),
                 price_in,
                 price_out,
             )
