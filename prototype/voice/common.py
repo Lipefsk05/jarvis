@@ -14,6 +14,18 @@ SENTENCES = (
 )
 
 
+def read_env(name: str) -> str:
+    """A value from the repo's .env (or the environment). The file stays out of git; the key is never printed."""
+    if os.environ.get(name):
+        return os.environ[name]
+    env = Path(__file__).resolve().parents[2] / ".env"
+    for line in env.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == name:
+            return value.strip().strip('"').strip("'")
+    raise SystemExit(f"{name} não encontrada em {env}")
+
+
 def add_cuda_dlls() -> None:
     """faster-whisper needs cuBLAS and cuDNN; pip ships them inside site-packages/nvidia/*/bin."""
     if sys.platform != "win32":

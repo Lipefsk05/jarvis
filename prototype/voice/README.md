@@ -37,6 +37,20 @@ C:\Users\felip\jarvis-voice-venv\Scripts\python.exe bench_stt.py
 ```
 Do WSL: `powershell.exe -NoProfile -Command "& 'C:\Users\felip\jarvis-voice-venv\Scripts\python.exe' bench_tts.py"`. Os WAVs saem em `C:\Users\felip\jarvis-voice-out`.
 
+## Voz do Google (Chirp 3 HD) — NÃO adotado, possível mudança futura (2026-10-15)
+**Situação:** ao ativar o teste grátis (US$ 300, 90 dias), o cartão Elo do Felipe exigiu um **pré-pagamento único de R$ 150**, reembolsável se fechar a conta de faturamento (prazo e regras não vistos; ler o link "Learn more about payment methods" da tela). Ele parou e manteve o Edge-TTS. O projeto `jarvis-voz-511802` existe, sem faturamento. Quando retomar, decidir os R$ 150 (conta pré-paga só gasta o saldo, uma trava natural) ou tentar outro cartão; sem conta de faturamento a API não funciona.
+
+Passos, se for adiante. Escolhida para testar porque dá **1 milhão de caracteres grátis por mês** (~15 h de fala); depois disso são US$ 30 por milhão, **cobrados sozinhos** se passar. Por isso o teto rígido é parte da configuração:
+
+1. Em <https://console.cloud.google.com> crie um **projeto novo** só pra isso (ex.: `jarvis-voz`).
+2. **Faturamento**: vincule uma conta de faturamento ao projeto (pede cartão; o grátis só vale em conta paga).
+3. **Orçamento com teto**: Faturamento > Orçamentos e alertas > Criar orçamento. Escopo: só este projeto. Valor: R$ 1 (ou o mínimo). Alertas em 50%, 90% e 100% por e-mail. Se aparecer a opção **"Spend cap"/aplicar teto**, ligue: ao bater o teto a API passa a recusar o uso. Se não aparecer, o orçamento só avisa (não bloqueia): nesse caso, olhe o uso do mês de vez em quando.
+4. **Ativar a API**: APIs e serviços > Biblioteca > "Cloud Text-to-Speech API" > Ativar.
+5. **Chave**: APIs e serviços > Credenciais > Criar credenciais > Chave de API. Em "Restrições de API", limite a **Cloud Text-to-Speech API**. Copie a chave para o `.env` do repo como `GOOGLE_TTS_API_KEY=...` (o arquivo fica fora do git).
+6. Teste: `python bench_google.py --list` (lista as vozes pt-BR Chirp 3 HD) e `python bench_google.py` (toca 3 vozes masculinas).
+
+O custo é por caractere enviado (conta espaços); a resposta do Jarvis por voz tem ~100 a 300 caracteres.
+
 ## Dispositivos de áudio (esta máquina, 2026-10-15)
 Microfones: Logitech USB Microphone (dedicado), Intel Smart Sound (do notebook). Caixa: Realtek. Fone Bluetooth QCY evitado nos testes (microfone ruim e latência na troca de perfil).
 

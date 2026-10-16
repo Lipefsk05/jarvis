@@ -29,7 +29,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from common import OUT, add_cuda_dlls
+from common import OUT, add_cuda_dlls, read_env
 
 SRC = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SRC / "src"))
@@ -52,14 +52,6 @@ VOICE_RULES = (
     "só conversa. Responda em 1 a 3 frases curtas e faladas, sem listas, sem markdown, sem emojis e sem 'dois pontos' "
     "no meio da frase. Se a resposta precisaria de uma lista ou de detalhe longo, diga que manda por texto no Telegram."
 )
-
-
-def read_env(name: str) -> str:
-    for line in (SRC / ".env").read_text(encoding="utf-8").splitlines():
-        key, _, value = line.partition("=")
-        if key.strip() == name:
-            return value.strip().strip('"').strip("'")
-    raise SystemExit(f"{name} não encontrada em {SRC / '.env'}")
 
 
 # --- listening ----------------------------------------------------------------------------------------
