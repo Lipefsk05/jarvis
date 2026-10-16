@@ -6,8 +6,7 @@ import json
 import logging
 import sys
 import traceback
-from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -40,8 +39,9 @@ from .outbox import Outbox, TelegramChannel
 from .reminder_flow import Dropped, ReminderFlow
 from .reminder_request import PlannedSeries, is_schedule, parse_misheard_request
 from .reminder_text import confirmation, listing, series_confirmation
-from .marks import AMBIGUOUS, MARK_ANCHOR, MarkAsk, answer_place, answer_time, ask_missing, missing_step, confirmation as mark_confirmation, parse_moment, resolve_ambiguous
-from .plan import Habits, PlanStore
+from .board import load_board
+from .plan import PlanStore
+from .planner import advance, complete, format_plan, format_week, progress, rebalance
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
 from .telegram_format import format_items, format_summary, safe
@@ -56,8 +56,7 @@ UNSUPPORTED_MEDIA = "Por ora só entendo texto e áudio, senhor. Fotos, arquivos
 UNKNOWN_COMMAND = "Não conheço esse comando, senhor. Use /ajuda para ver o que sei fazer."
 TASK_LIST_LIMIT = 20  # Telegram messages cap at 4096 characters
 NOT_FUNNY = "not_funny"
-_STEP_MARK = {anchor: mark for mark, anchor in MARK_ANCHOR.items()}
-MARK_QUESTION_TTL = timedelta(minutes=10)
+PLAN_CHECK_SECONDS = 120  # how often the bot checks whether a new day's plan is due
 HANDLER_FAILED = "Tive um problema ao tratar isso, senhor. Pode tentar de novo?"
 
 
@@ -91,9 +90,6 @@ def build_application(settings: Settings) -> Application:
     reminders = ReminderStore(settings.state_dir / "lembretes.json")
     flow = ReminderFlow(pending=reminders.pending)
     plans = PlanStore(settings.state_dir / "plano.json")
-    habits = Habits()
-    pending_steps: dict[int, tuple] = {}  # chat -> (skipped anchor, when it was asked) awaiting "a que horas foi?"
-    pending_marks: dict[int, tuple] = {}  # chat -> (the "cheguei"/"saí" action, when it was asked) awaiting "em casa"/"no trabalho"
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
     assistant = Assistant(
@@ -151,8 +147,10 @@ def build_application(settings: Settings) -> Application:
             said = user_text or action.quando + (f", {action.antecedencia} min antes" if action.antecedencia else "")
             planned = flow.start(chat_id, said, clock(), text=action.texto, when=action.quando, lead=action.antecedencia)
             await store_reminder(message, chat_id, planned)
-        elif action.name == "avisar_marco":
-            await report_mark(message, chat_id, action)
+        elif action.name == "concluir_tarefa":
+            await finish_task(message, chat_id, action)
+        elif action.name == "adiantar_tarefa":
+            await advance_task(message, chat_id)
         elif action.name == "listar_lembretes":
             await message.reply_text(listing(reminders.pending(), clock()))
             assistant.remember(chat_id, "(Mostrei os lembretes pendentes.)")
@@ -168,31 +166,71 @@ def build_application(settings: Settings) -> Application:
             history.clear(chat_id)
             await message.reply_text("Conversa limpa, senhor.")
 
-    async def report_mark(message, chat_id: int, action, ask_skipped: bool = True) -> None:
-        """Record where the Felipe says he is ("cheguei no trampo") as an anchor of today's plan."""
+    async def refresh_plan() -> list:
+        """Judge the days that passed and refill the calendar from the Mind's board (once a day, and on demand)."""
+        tasks = await asyncio.to_thread(load_board, settings.mind_dir)
+        rebalance(plans, tasks, clock().date())
+        return tasks
+
+    def _short(title: str, limit: int = 70) -> str:
+        return title if len(title) <= limit else title[:limit - 1].rstrip() + "…"
+
+    async def finish_task(message, chat_id: int, action) -> None:
+        """"Concluí X": mark it in today's plan and leave a note in the inbox so the Mind's board can be ticked."""
         now = clock()
-        told = plans.get(now.date()).told if plans.get(now.date()) else {}
-        anchor = MARK_ANCHOR.get(action.marco) or resolve_ambiguous(action.marco, told, now)
-        moment = parse_moment(action.quando, now)
-        problem = anchor if isinstance(anchor, MarkAsk) else moment if isinstance(moment, MarkAsk) else None
-        if isinstance(anchor, MarkAsk) and action.marco in AMBIGUOUS:
-            pending_marks[chat_id] = (action, now)
-        if problem is not None:
-            await message.reply_text(problem.question)
-            assistant.remember(chat_id, problem.question)
-            return
-        try:
-            plan = plans.tell(now.date(), anchor, moment, habits, tz)
-        except ValueError:
-            reply = "Isso não bate com o que o senhor já me avisou hoje, senhor. Pode me dizer de novo, com a hora?"
+        today = now.date()
+        tasks = await refresh_plan()
+        result = complete(plans, tasks, today, action.tarefa)
+        if result.kind == "many":
+            options = "; ".join(f"“{_short(t, 50)}”" for t in result.options)
+            reply = f"Qual delas, senhor? Encontrei: {options}. Diga com mais detalhe."
+        elif result.kind == "none":
+            reply = f"Não achei “{_short(action.tarefa, 50)}” entre as suas tarefas, senhor. Diga como está no board, ou use /tarefas."
+        elif result.kind == "again":
+            reply = f"“{_short(result.item.title)}” já estava concluída hoje, senhor."
         else:
-            reply = mark_confirmation(anchor, moment, plan.told, habits, tz)
-            step = missing_step(anchor, plan.told) if ask_skipped else None
-            if step is not None:  # "chegou em casa" with no "saí do trabalho": he may have mistyped, so ask
-                reply += " " + ask_missing(step)
-                pending_steps[chat_id] = (step, now)
+            item = result.item
+            ref = f" {item.task_id}" if item.task_id.startswith("^") else ""
+            path = await asyncio.to_thread(
+                write_note, settings.inbox_dir, f"Tarefa concluída: {item.title}{ref} ({item.area})", now, "jarvis-plano")
+            notes.add(path)
+            plan = plans.get(today)
+            reply = f"Registrado, senhor: “{_short(item.title)}” concluída. Hoje: {progress(plan)}."
+            ahead = any(p.day > today and p.open_items() for p in plans.days())
+            if plan is not None and not plan.open_items() and ahead:
+                reply += " O dia está fechado. Como está o seu tempo? Quer adiantar uma de amanhã?"
+                assistant.offer(chat_id, Action("adiantar_tarefa"))
         await message.reply_text(reply)
         assistant.remember(chat_id, reply)
+
+    async def advance_task(message, chat_id: int) -> None:
+        item = advance(plans, clock().date())
+        if item is None:
+            reply = "Não há nada planejado pra frente, senhor."
+        else:
+            await refresh_plan()
+            reply = f"Passei “{_short(item.title)}” para hoje, senhor."
+        await message.reply_text(reply)
+        assistant.remember(chat_id, reply)
+
+    async def on_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Today's plan (or the week, with "/plano semana"); asking also refills the calendar from the board."""
+        today = clock().date()
+        await refresh_plan()
+        asked = " ".join(context.args or []).lower()
+        text = format_week(plans, today) if asked.startswith("sem") else format_plan(plans.get(today), plans, today)
+        await update.effective_message.reply_text(text)
+        assistant.remember(update.effective_chat.id, text)
+
+    async def plan_daily() -> None:
+        """At midnight, or as soon as the bot starts if the PC was off, settle the past days and plan the next month."""
+        while True:
+            try:
+                if plans.load.rebalanced != clock().date():
+                    await refresh_plan()
+            except Exception:  # the loop must outlive any single bad tick
+                log.exception("Plan tick failed")
+            await asyncio.sleep(PLAN_CHECK_SECONDS)
 
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await handle_text(update.effective_message, update.effective_chat.id, update.effective_message.text, context)
@@ -203,18 +241,6 @@ def build_application(settings: Settings) -> Application:
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
-        skipped = pending_steps.pop(chat_id, None)  # any other message closes the "a que horas foi?" question
-        if skipped is not None and clock() - skipped[1] <= MARK_QUESTION_TTL:
-            when = answer_time(text, clock())
-            if when is not None:
-                await report_mark(message, chat_id, Action("avisar_marco", marco=_STEP_MARK[skipped[0]], quando=when.strftime("%H:%M")), ask_skipped=False)
-                return
-        waiting = pending_marks.pop(chat_id, None)  # any other message closes the "onde?" question
-        if waiting is not None and clock() - waiting[1] <= MARK_QUESTION_TTL:
-            concrete = answer_place(waiting[0].marco, text)
-            if concrete is not None:
-                await report_mark(message, chat_id, replace(waiting[0], marco=concrete))
-                return
         answered = flow.answer(chat_id, text, clock())  # a question about a reminder is waiting for this message
         if answered is not None:
             await store_reminder(message, chat_id, answered)
@@ -473,6 +499,7 @@ def build_application(settings: Settings) -> Application:
         application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
             reminders, outbox, clock, on_delivered=lambda text: assistant.remember(owner_chat, text),
         ))
+        application.bot_data["planner"] = asyncio.create_task(plan_daily())
 
     async def publish_menu(application: Application) -> None:
         try:
@@ -486,7 +513,7 @@ def build_application(settings: Settings) -> Application:
         await start_scheduler(application)
 
     async def post_shutdown(application: Application) -> None:
-        for name in ("heartbeat", "scheduler"):
+        for name in ("heartbeat", "scheduler", "planner"):
             task = application.bot_data.get(name)
             if task is not None:
                 task.cancel()
@@ -503,6 +530,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("cancela", on_cancel, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
+    app.add_handler(CommandHandler("plano", on_plan, filters=allowed))
     app.add_handler(CommandHandler(["ajuda", "help"], on_help, filters=allowed))
     app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.COMMAND, on_unknown))

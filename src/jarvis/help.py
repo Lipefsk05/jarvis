@@ -18,6 +18,10 @@ COMMANDS = (
     Command("tarefas", "[área]", "Pendências do seu Mind",
             "mostra as pendências do seu Mind por área; com uma área (ex.: /tarefas dindin) lista os itens, "
             "e palavras extras estreitam (/tarefas dindin feedback). Perdoa erro de digitação no nome da área."),
+    Command("plano", "[semana]", "O plano de hoje",
+            "mostra as tarefas de hoje, tiradas do seu Mind: 🔴 e prazos primeiro, no ritmo que o senhor tem entregado. "
+            "O que não for feito passa para o dia seguinte; sábado fica livre. Com \"semana\" mostra os próximos dias. "
+            "Para dar uma tarefa por concluída, é só dizer (\"concluí a landing\")."),
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind",
             'guarda uma nota no inbox do seu Mind. Também funciona em linguagem natural: "anota que preciso comprar pão".'),
     Command("desfaz", "", "Desfaz a última nota",

@@ -86,3 +86,19 @@ class OptionalFieldsAcceptNullTest(unittest.TestCase):
             parse_action(ToolCall("cancelar_lembrete", {"numero": None, "busca": "aluguel"})), Action("cancelar_lembrete", busca="aluguel"))
         self.assertEqual(
             parse_action(ToolCall("cancelar_lembrete", {"numero": 3, "busca": None})), Action("cancelar_lembrete", numero=3))
+
+
+class ConcludeToolTest(unittest.TestCase):
+    def test_the_done_tool_needs_a_task_and_has_no_sign_of_the_old_marks(self):
+        from jarvis.actions import KNOWN, parse_action
+        from jarvis.talker.base import ToolCall
+        self.assertIn("concluir_tarefa", KNOWN)
+        self.assertNotIn("avisar_marco", KNOWN)
+        self.assertEqual(parse_action(ToolCall("concluir_tarefa", {"tarefa": " landing do dindin "})).tarefa, "landing do dindin")
+        self.assertIsNone(parse_action(ToolCall("concluir_tarefa", {"tarefa": "  "})))
+
+    def test_the_done_tool_needs_the_users_own_words(self):
+        from jarvis.commands import has_intent
+        for said in ("concluí a landing", "terminei o relatório", "fiz o cadastro", "finalizei tudo"):
+            self.assertTrue(has_intent("concluir_tarefa", said), said)
+        self.assertFalse(has_intent("concluir_tarefa", "amanhã eu vejo a landing"))

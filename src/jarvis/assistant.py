@@ -107,6 +107,10 @@ class Assistant:
         self._history.add(chat_id, "user", text)
         return action
 
+    def offer(self, chat_id: int, action: Action) -> None:
+        """Keep an action the code proposes, so a short "sim" runs it without the model."""
+        self._offers[chat_id] = (self._clock(), action)
+
     def _estado_atual(self) -> str:
         if self._estado_path is None:
             return ""
@@ -152,8 +156,8 @@ class Assistant:
         elif action.name == "anotar":
             preview = action.texto if len(action.texto) <= 60 else action.texto[:57] + "…"
             question = f"Quer que eu anote “{preview}”, senhor? Diga \"sim\" para confirmar."
-        elif action.name == "avisar_marco":
-            question = 'Quer que eu registre isso como um aviso de onde o senhor está, senhor? Diga "sim" para confirmar.'
+        elif action.name == "concluir_tarefa":
+            question = f'Quer que eu registre “{action.tarefa}” como concluída, senhor? Diga "sim" para confirmar.'
         else:
             question = ("Não tenho certeza do que o senhor quis dizer, senhor. Se é um lembrete, diga por exemplo "
                         "\"me lembra amanhã às 10 de correr\".")

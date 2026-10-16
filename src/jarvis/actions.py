@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .marks import MARKS
 from .talker.base import ToolCall
 
 MAX_NOTE_CHARS = 2000
@@ -63,16 +62,12 @@ TOOLS = [
         },
     ),
     _tool(
-        "avisar_marco",
-        "Registra onde o senhor está no dia, quando ele AVISA que acabou de sair ou chegar: saiu de casa (indo pro "
-        "trabalho), chegou no trabalho, saiu do trabalho, chegou em casa. Chame só quando ele estiver contando que "
-        "isso aconteceu (\"cheguei no trampo\", \"to saindo de casa\", \"saí agora\", \"desci em casa\"). Se ele disse só "
-        "\"cheguei\" ou \"saí\" sem dizer onde, use chegada ou saida. Não chame para planos futuros (\"vou sair às 8\").",
-        {
-            "marco": {"type": "string", "enum": list(MARKS), "description": "saida_casa, chegada_trabalho, saida_trabalho, chegada_casa; ou chegada/saida se ele não disse onde."},
-            "hora": {"type": ["string", "null"], "description": "Só se ele disse quando aconteceu, nas palavras dele (\"9:40\", \"há 10 minutos\"). Vazio = agora."},
-        },
-        ["marco"],
+        "concluir_tarefa",
+        "Registra que o senhor terminou uma tarefa do plano. Chame quando ele disser que concluiu, terminou, fez ou "
+        "finalizou algo (\"concluí a landing\", \"terminei o relatório\", \"fiz o cadastro\"). Não chame para o que "
+        "ele ainda vai fazer, nem para um comentário sobre o que outra pessoa fez.",
+        {"tarefa": {"type": "string", "description": "As palavras dele sobre qual tarefa foi concluída, curtas (\"landing do dindin\")."}},
+        ["tarefa"],
     ),
     _tool("ver_gasto", "Mostra as chamadas, os tokens e o custo de hoje, com o teto diário. Chame quando o senhor perguntar quanto gastou ou usou."),
     _tool("mostrar_ajuda", "Mostra a lista do que o assistente sabe fazer. Chame quando o senhor perguntar o que você faz, como usar você, quais são seus comandos ou funções, ou pedir ajuda com o próprio assistente."),
@@ -90,7 +85,7 @@ class Action:
     antecedencia: int = 0  # minutes of advance warning
     numero: int = 0
     busca: str = ""
-    marco: str = ""  # one of marks.MARKS; `quando` carries the time the mark happened, if said
+    tarefa: str = ""  # which task he says he finished
 
 
 def _clean(value: object, limit: int) -> str:
@@ -131,9 +126,7 @@ def parse_action(call: ToolCall | None) -> Action | None:
         if numero is None or numero < 0 or not (numero or busca):
             return None
         return Action("cancelar_lembrete", numero=numero, busca=busca)
-    if call.name == "avisar_marco":
-        marco = _clean(call.arguments.get("marco"), MAX_AREA_CHARS)
-        if marco not in MARKS:
-            return None
-        return Action("avisar_marco", marco=marco, quando=_clean(call.arguments.get("hora"), MAX_WHEN_CHARS))
+    if call.name == "concluir_tarefa":
+        tarefa = _clean(call.arguments.get("tarefa"), MAX_NOTE_CHARS)
+        return Action("concluir_tarefa", tarefa=tarefa) if tarefa else None
     return Action(call.name)

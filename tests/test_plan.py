@@ -1,109 +1,49 @@
 import tempfile
 import unittest
-from datetime import date, datetime, time
+from datetime import date
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from jarvis.plan import (
-    ANY, BUS, HOME, NOTEBOOK, PHONE, POSTPONED, WORK, Block, DayPlan, Habits, PlanItem, PlanStore,
-    build_blocks, resolve_anchors,
+    MAX_CAPACITY, MIN_CAPACITY, NOTEBOOK, PHONE, POSTPONED, DayPlan, Load, PlanItem, PlanStore,
 )
 
-TZ = ZoneInfo("America/Sao_Paulo")
 DAY = date(2026, 10, 14)  # a Wednesday
-H = Habits()
-
-
-def at(h, m=0):
-    return datetime(2026, 10, 14, h, m, tzinfo=TZ)
-
-
-class AnchorsTest(unittest.TestCase):
-    def test_nothing_told_assumes_late_arrival(self):
-        moments, estimated = resolve_anchors(DAY, {}, H, TZ)
-        self.assertEqual(moments["arrive_work"], at(10, 30))
-        self.assertEqual(moments["leave_work"], at(16, 30))
-        self.assertEqual(moments["arrive_home"], at(17, 20))
-        self.assertEqual(moments["leave_home"], at(9, 40))
-        self.assertTrue(all(estimated.values()))
-
-    def test_arrival_moves_the_rest_of_the_day(self):
-        moments, estimated = resolve_anchors(DAY, {"arrive_work": at(9, 10)}, H, TZ)
-        self.assertEqual(moments["leave_work"], at(15, 10))
-        self.assertEqual(moments["arrive_home"], at(16, 0))
-        self.assertFalse(estimated["arrive_work"])
-        self.assertTrue(estimated["leave_work"])
-
-    def test_leaving_home_moves_the_rest_of_the_day(self):
-        moments, estimated = resolve_anchors(DAY, {"leave_home": at(8, 15)}, H, TZ)
-        self.assertEqual(moments["arrive_work"], at(9, 5))
-        self.assertEqual(moments["leave_work"], at(15, 5))
-        self.assertFalse(estimated["leave_home"])
-        self.assertTrue(estimated["arrive_work"])
-
-    def test_two_told_anchors_bound_the_guess_between_them(self):
-        told = {"leave_home": at(8, 0), "leave_work": at(14, 0)}
-        moments, _ = resolve_anchors(DAY, told, H, TZ)
-        self.assertEqual(moments["arrive_work"], at(8, 50))
-        self.assertEqual(moments["arrive_home"], at(14, 50))
-
-    def test_told_later_anchor_pulls_guesses_earlier(self):
-        moments, _ = resolve_anchors(DAY, {"arrive_home": at(15, 50)}, H, TZ)
-        self.assertEqual(moments["arrive_home"], at(15, 50))
-        self.assertEqual(moments["leave_work"], at(15, 0))
-        self.assertEqual(moments["arrive_work"], at(9, 0))
-        self.assertEqual(moments["leave_home"], at(8, 10))
-
-    def test_told_anchors_out_of_order_are_rejected(self):
-        with self.assertRaises(ValueError):
-            resolve_anchors(DAY, {"arrive_work": at(10), "leave_work": at(9)}, H, TZ)
-
-    def test_unknown_anchor_is_rejected(self):
-        with self.assertRaises(ValueError):
-            resolve_anchors(DAY, {"lunch": at(12)}, H, TZ)
-
-
-class BlocksTest(unittest.TestCase):
-    def test_five_contiguous_blocks_anchored_on_arrival(self):
-        blocks = build_blocks(DAY, {"arrive_work": at(9, 30)}, H, TZ)
-        self.assertEqual([b.kind for b in blocks],
-                         ["casa_manha", "onibus_ida", "trabalho", "onibus_volta", "casa_noite"])
-        for a, b in zip(blocks, blocks[1:]):
-            self.assertEqual(a.end, b.start)
-        self.assertEqual(blocks[1].start, at(8, 40))
-        self.assertEqual(blocks[2].start, at(9, 30))
-        self.assertTrue(blocks[1].estimated)  # leaving home was not told
-        self.assertTrue(blocks[3].estimated)  # leaving work was not told
-
-    def test_all_told_means_no_estimated_edge_on_the_commute(self):
-        told = {"leave_home": at(8, 40), "arrive_work": at(9, 30), "leave_work": at(15, 40), "arrive_home": at(16, 35)}
-        blocks = build_blocks(DAY, told, H, TZ)
-        self.assertFalse(any(b.estimated for b in blocks[1:]))
-
-    def test_evening_never_ends_before_arriving_home(self):
-        blocks = build_blocks(DAY, {"arrive_home": at(23, 0), "leave_work": at(22, 0)}, H, TZ)
-        self.assertGreaterEqual(blocks[-1].end, blocks[-1].start)
-
-    def test_places_accept_the_right_tasks(self):
-        blocks = {b.kind: b for b in build_blocks(DAY, {}, H, TZ)}
-        self.assertTrue(blocks["casa_noite"].accepts(NOTEBOOK))
-        self.assertFalse(blocks["onibus_ida"].accepts(NOTEBOOK))
-        self.assertTrue(blocks["onibus_volta"].accepts(PHONE))
-        self.assertTrue(blocks["trabalho"].accepts(ANY))
-        self.assertEqual(blocks["onibus_ida"].place, BUS)
-        self.assertEqual(blocks["trabalho"].place, WORK)
-        self.assertEqual(blocks["casa_manha"].place, HOME)
-
-    def test_block_minutes(self):
-        block = Block("x", HOME, at(10), at(11, 30), False)
-        self.assertEqual(block.minutes, 90)
 
 
 class CapacityTest(unittest.TestCase):
-    def test_starts_low_and_saturday_is_zero(self):
-        self.assertEqual(H.capacity(date(2026, 10, 14)), 3)
-        self.assertEqual(H.capacity(date(2026, 10, 18)), 2)  # Sunday
-        self.assertEqual(H.capacity(date(2026, 10, 17)), 0)  # Saturday
+    def test_starts_low_sunday_holds_one_less_and_saturday_is_zero(self):
+        load = Load()
+        self.assertEqual(load.capacity(date(2026, 10, 14)), 3)
+        self.assertEqual(load.capacity(date(2026, 10, 18)), 2)  # Sunday
+        self.assertEqual(load.capacity(date(2026, 10, 17)), 0)  # Saturday
+
+    def test_two_full_days_raise_it_two_short_days_lower_it(self):
+        load = Load()
+        load.record(DAY, True)
+        self.assertEqual(load.base, 3)
+        load.record(DAY, True)
+        self.assertEqual((load.base, load.full), (4, 0))
+        load.record(DAY, False)
+        load.record(DAY, False)
+        self.assertEqual((load.base, load.short), (3, 0))
+
+    def test_a_break_in_the_streak_starts_it_over(self):
+        load = Load()
+        load.record(DAY, True)
+        load.record(DAY, False)
+        load.record(DAY, True)
+        self.assertEqual(load.base, 3)
+
+    def test_capacity_has_a_floor_and_a_ceiling(self):
+        load = Load(base=MIN_CAPACITY)
+        for _ in range(6):
+            load.record(DAY, False)
+        self.assertEqual(load.base, MIN_CAPACITY)
+        load = Load(base=MAX_CAPACITY)
+        for _ in range(6):
+            load.record(DAY, True)
+        self.assertEqual(load.base, MAX_CAPACITY)
+        self.assertEqual(Load(base=MIN_CAPACITY).capacity(date(2026, 10, 18)), MIN_CAPACITY)  # Sunday never reaches 0
 
 
 class StoreTest(unittest.TestCase):
@@ -113,30 +53,29 @@ class StoreTest(unittest.TestCase):
         self.path = Path(tmp.name) / "plano.json"
         self.store = PlanStore(self.path)
 
-    def test_tell_persists_and_survives_restart(self):
-        self.store.tell(DAY, "arrive_work", at(9, 20), H, TZ)
-        again = PlanStore(self.path)
-        self.assertEqual(again.get(DAY).told["arrive_work"], at(9, 20))
-
-    def test_tell_rejects_contradiction_and_keeps_old_state(self):
-        self.store.tell(DAY, "arrive_work", at(10), H, TZ)
-        with self.assertRaises(ValueError):
-            self.store.tell(DAY, "leave_work", at(9), H, TZ)
-        self.assertNotIn("leave_work", self.store.get(DAY).told)
-
-    def test_tell_requires_aware_datetime(self):
-        with self.assertRaises(ValueError):
-            self.store.tell(DAY, "arrive_work", datetime(2026, 10, 14, 9), H, TZ)
-
     def test_items_roundtrip_and_mark(self):
-        plan = DayPlan(DAY, items=[PlanItem("^jv-agenda", "  Agenda   e e-mail ", PHONE, "onibus_ida", minutes=30)])
+        plan = DayPlan(DAY, items=[PlanItem("^jv-agenda", "  Agenda   e e-mail ", PHONE, minutes=30, area="pessoal/jarvis")])
         self.store.put(plan)
         again = PlanStore(self.path)
         item = again.get(DAY).items[0]
-        self.assertEqual((item.title, item.needs, item.minutes), ("Agenda e e-mail", PHONE, 30))
+        self.assertEqual((item.title, item.needs, item.minutes, item.area), ("Agenda e e-mail", PHONE, 30, "pessoal/jarvis"))
         self.assertEqual(again.mark(DAY, "^jv-agenda", POSTPONED).status, POSTPONED)
         self.assertEqual(again.get(DAY).open_items(), [])
         self.assertIsNone(again.mark(DAY, "nope", POSTPONED))
+
+    def test_load_survives_a_restart(self):
+        self.store.load.base, self.store.load.settled = 5, DAY
+        self.store.save(DAY)
+        again = PlanStore(self.path)
+        self.assertEqual((again.load.base, again.load.settled), (5, DAY))
+
+    def test_a_file_from_the_anchor_model_still_loads(self):
+        self.path.write_text(
+            '{"days": [{"day": "2026-10-14", "told": {"arrive_work": "2026-10-14T09:00:00-03:00"}, "items": ['
+            '{"task_id": "^x", "title": "Algo", "needs": "notebook", "block": "casa_noite", "status": "planejado", '
+            '"minutes": 25, "maybe": false}]}]}', encoding="utf-8")
+        item = PlanStore(self.path).get(DAY).items[0]
+        self.assertEqual((item.task_id, item.needs, item.minutes), ("^x", NOTEBOOK, 25))
 
     def test_invalid_item_values(self):
         with self.assertRaises(ValueError):
@@ -154,6 +93,12 @@ class StoreTest(unittest.TestCase):
         self.store.put(DayPlan(date(2026, 9, 1)))
         self.store.put(DayPlan(DAY))
         self.assertIsNone(PlanStore(self.path).get(date(2026, 9, 1)))
+
+    def test_drop_after_keeps_the_day_itself(self):
+        for n in (14, 15, 16):
+            self.store.put(DayPlan(date(2026, 10, n)))
+        self.store.drop_after(DAY)
+        self.assertEqual([p.day.day for p in self.store.days()], [14])
 
 
 if __name__ == "__main__":

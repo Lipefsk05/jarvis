@@ -1,11 +1,11 @@
-"""Daily plan model: the day as elastic blocks anchored on what actually happened, plus the plan file.
+"""Daily plan model: which tasks belong to which day, how many a day holds, and the plan file.
 
-The Felipe's day moves (he arrives at work between ~9h and ~10h30, rides a bus 40-60 min each way), so
-nothing is a fixed clock time. Four anchors move everything: leaving home, arriving at work, leaving work,
-arriving home. Told anchors win; missing ones are estimated from habits (arrival defaults to the *end* of the
-usual range, so nothing is planned over time he may still be away). This module only models and stores;
-choosing which task goes where is the planner's job. Saturday daytime is sacred (see vida-pessoal/rotina.md);
-the Friday sunset edge is not modeled yet, only the day-level capacity of 0.
+The plan is a calendar of tasks for the next month. There are no clock times and nothing to report during the
+day: the Felipe says "concluí X" when he finishes something, and once a day (midnight, or when the bot starts
+if the PC was off) the planner settles the days that passed and refills the ones ahead. What was not done rolls
+to the next day. How many tasks a day holds (`Load`) starts low and follows what he really delivers: a couple
+of full days in a row raise it, a couple of short days lower it. Saturday daytime is sacred (see
+vida-pessoal/rotina.md): capacity 0. This module only models and stores; choosing the tasks is the planner's job.
 """
 from __future__ import annotations
 
@@ -13,116 +13,73 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Where a block happens
-HOME, BUS, WORK = "casa", "onibus", "trabalho"
-# What a task needs (where it can be done)
+# What a task needs (where it can be done); informational, shown next to the task
 NOTEBOOK, PHONE, ANY = "notebook", "celular", "qualquer"
 # Plan item status
 PLANNED, DONE, POSTPONED, SKIPPED = "planejado", "feito", "adiado", "pulado"
 STATUSES = (PLANNED, DONE, POSTPONED, SKIPPED)
-ANCHORS = ("leave_home", "arrive_work", "leave_work", "arrive_home")  # saída de casa, chegada ao trabalho, saída do trabalho, chegada em casa
 SABBATH_WEEKDAY = 5  # Saturday (Monday is 0)
-KEEP_DAYS = 14
+HORIZON_DAYS = 30    # the plan always looks a month ahead
+KEEP_DAYS = 14       # days already gone that stay in the file
 MAX_TITLE_CHARS = 200
 
+BASE_CAPACITY = 3    # tasks in a weekday at first; Sunday holds one less
+MIN_CAPACITY, MAX_CAPACITY = 1, 8
+STREAK_DAYS = 2      # days in a row (all done / some left) before the capacity moves by one
 
-@dataclass(frozen=True)
-class Habits:
-    """Defaults used when an anchor was not told. All adjustable; learned values replace them later."""
-    arrive_work: time = time(10, 30)      # end of the usual 9:00-10:30 range, never the early end
-    work_minutes: int = 6 * 60            # internship; 8-9 h if it becomes CLT
-    bus_minutes: int = 50                 # 40 min to 1 h each way
-    wake: time = time(7, 0)
-    evening_end: time = time(22, 0)
-    capacity_weekday: int = 3             # starts low; grows as the Felipe sees it work
-    capacity_weekend: int = 2
+
+@dataclass
+class Load:
+    """How much a day holds, learned from what was delivered. `settled` is the last day already judged."""
+    base: int = BASE_CAPACITY
+    full: int = 0                   # days in a row with every planned task done
+    short: int = 0                  # days in a row with something left over
+    settled: date | None = None
+    rebalanced: date | None = None  # the day the planner last refilled the calendar
 
     def capacity(self, day: date) -> int:
         if day.weekday() == SABBATH_WEEKDAY:
             return 0
-        return self.capacity_weekend if day.weekday() >= 5 else self.capacity_weekday
+        return max(MIN_CAPACITY, self.base - 1) if day.weekday() == 6 else self.base
 
+    def record(self, day: date, delivered_all: bool) -> None:
+        """Judge one finished day (sabbath excluded by the caller) and move the capacity if the streak is long enough."""
+        if delivered_all:
+            self.full, self.short = self.full + 1, 0
+        else:
+            self.short, self.full = self.short + 1, 0
+        if self.full >= STREAK_DAYS:
+            self.base, self.full = min(MAX_CAPACITY, self.base + 1), 0
+        elif self.short >= STREAK_DAYS:
+            self.base, self.short = max(MIN_CAPACITY, self.base - 1), 0
 
-@dataclass(frozen=True)
-class Block:
-    kind: str            # "casa_manha" | "onibus_ida" | "trabalho" | "onibus_volta" | "casa_noite"
-    place: str           # HOME | BUS | WORK
-    start: datetime
-    end: datetime
-    estimated: bool      # some edge was guessed, so the block may shift; the plan treats it as "if it fits"
+    def to_json(self) -> dict:
+        return {"base": self.base, "full": self.full, "short": self.short,
+                "settled": self.settled.isoformat() if self.settled else None,
+                "rebalanced": self.rebalanced.isoformat() if self.rebalanced else None}
 
-    @property
-    def minutes(self) -> int:
-        return max(0, int((self.end - self.start).total_seconds() // 60))
-
-    def accepts(self, needs: str) -> bool:
-        """Whether a task needing `needs` can be done here. The bus is phone-only; at work only if
-        the load allows, so the planner must treat WORK as a last, "if possible" slot."""
-        if self.place == HOME:
-            return True
-        return needs in (PHONE, ANY)
-
-
-def resolve_anchors(day: date, told: dict[str, datetime], habits: Habits, tz) -> tuple[dict, dict]:
-    """The four anchors for `day`, as (moments, estimated flags). Guesses grow outward from the first told
-    anchor (or from the usual arrival, if nothing was told) and never contradict a told one: a guess that
-    would land after a later told anchor is pulled earlier, but never closer than the bus ride to the one before."""
-    for name in told:
-        if name not in ANCHORS:
-            raise ValueError(f"unknown anchor {name!r}")
-    bus, work = timedelta(minutes=habits.bus_minutes), timedelta(minutes=habits.work_minutes)
-    gap = {"arrive_work": bus, "leave_work": work, "arrive_home": bus}  # time since the previous anchor
-    estimated = {name: name not in told for name in ANCHORS}
-    told_times = [told[n] for n in ANCHORS if n in told]
-    if told_times != sorted(told_times):
-        raise ValueError("anchors out of order")
-    start = next((i for i, n in enumerate(ANCHORS) if n in told), 1)
-    moments = {ANCHORS[start]: told.get(ANCHORS[start]) or datetime.combine(day, habits.arrive_work, tz)}
-    for i in range(start - 1, -1, -1):
-        moments[ANCHORS[i]] = moments[ANCHORS[i + 1]] - gap[ANCHORS[i + 1]]
-    for i in range(start + 1, len(ANCHORS)):
-        moments[ANCHORS[i]] = told.get(ANCHORS[i]) or moments[ANCHORS[i - 1]] + gap[ANCHORS[i]]
-    for i in range(len(ANCHORS) - 2, -1, -1):
-        name, following = ANCHORS[i], ANCHORS[i + 1]
-        if estimated[name]:
-            moments[name] = min(moments[name], moments[following] - gap[following])
-    floor = {"arrive_work": bus, "leave_work": timedelta(0), "arrive_home": bus}  # shortest plausible gap
-    for i in range(1, len(ANCHORS)):  # told anchors can squeeze a guess, but never into the past of the one before
-        name = ANCHORS[i]
-        if estimated[name]:
-            moments[name] = max(moments[name], moments[ANCHORS[i - 1]] + floor[name])
-    return {n: moments[n] for n in ANCHORS}, estimated
-
-
-def build_blocks(day: date, told: dict[str, datetime], habits: Habits, tz) -> list[Block]:
-    """The five blocks of a work day, in order, anchored on what was told."""
-    moments, estimated = resolve_anchors(day, told, habits, tz)
-    leave_home, arrive = moments["leave_home"], moments["arrive_work"]
-    leave, home = moments["leave_work"], moments["arrive_home"]
-    morning_start = datetime.combine(day, habits.wake, tz)
-    evening_end = max(datetime.combine(day, habits.evening_end, tz), home)
-    return [
-        Block("casa_manha", HOME, min(morning_start, leave_home), leave_home, True),
-        Block("onibus_ida", BUS, leave_home, arrive, estimated["leave_home"] or estimated["arrive_work"]),
-        Block("trabalho", WORK, arrive, leave, estimated["arrive_work"] or estimated["leave_work"]),
-        Block("onibus_volta", BUS, leave, home, estimated["leave_work"] or estimated["arrive_home"]),
-        Block("casa_noite", HOME, home, evening_end, estimated["arrive_home"]),
-    ]
+    @staticmethod
+    def from_json(raw: dict) -> "Load":
+        def when(key: str) -> date | None:
+            return date.fromisoformat(raw[key]) if raw.get(key) else None
+        base = int(raw.get("base", BASE_CAPACITY))
+        return Load(min(MAX_CAPACITY, max(MIN_CAPACITY, base)), max(0, int(raw.get("full", 0))),
+                    max(0, int(raw.get("short", 0))), when("settled"), when("rebalanced"))
 
 
 @dataclass
 class PlanItem:
-    task_id: str          # the board's ^id when it has one, else a stable key made by the planner
+    task_id: str          # the board's ^id when it has one, else a stable key made by the board reader
     title: str
     needs: str = ANY      # NOTEBOOK | PHONE | ANY
-    block: str = ""       # Block.kind it was placed in; "" = not placed yet
     status: str = PLANNED
     minutes: int = 0      # 0 = unknown size
+    area: str = ""        # "group/area" of the board file, to spread the day over projects and to name it in the inbox
 
     def __post_init__(self) -> None:
         if self.needs not in (NOTEBOOK, PHONE, ANY):
@@ -133,41 +90,42 @@ class PlanItem:
         self.minutes = max(0, int(self.minutes))
 
     def to_json(self) -> dict:
-        return {"task_id": self.task_id, "title": self.title, "needs": self.needs, "block": self.block,
-                "status": self.status, "minutes": self.minutes}
+        return {"task_id": self.task_id, "title": self.title, "needs": self.needs, "status": self.status,
+                "minutes": self.minutes, "area": self.area}
 
     @staticmethod
-    def from_json(raw: dict) -> "PlanItem":
-        return PlanItem(str(raw["task_id"]), str(raw["title"]), raw.get("needs", ANY), raw.get("block", ""),
-                        raw.get("status", PLANNED), int(raw.get("minutes") or 0))
+    def from_json(raw: dict) -> "PlanItem":  # old files carried "block"/"maybe"; they are ignored
+        return PlanItem(str(raw["task_id"]), str(raw["title"]), raw.get("needs", ANY), raw.get("status", PLANNED),
+                        int(raw.get("minutes") or 0), str(raw.get("area", "")))
 
 
 @dataclass
 class DayPlan:
     day: date
-    told: dict[str, datetime] = field(default_factory=dict)   # anchors the Felipe reported
     items: list[PlanItem] = field(default_factory=list)
 
     def to_json(self) -> dict:
-        return {"day": self.day.isoformat(), "told": {k: v.isoformat() for k, v in self.told.items()},
-                "items": [i.to_json() for i in self.items]}
+        return {"day": self.day.isoformat(), "items": [i.to_json() for i in self.items]}
 
     @staticmethod
-    def from_json(raw: dict) -> "DayPlan":
-        return DayPlan(date.fromisoformat(raw["day"]),
-                       {k: datetime.fromisoformat(v) for k, v in raw.get("told", {}).items()},
-                       [PlanItem.from_json(i) for i in raw.get("items", [])])
+    def from_json(raw: dict) -> "DayPlan":  # old files carried "told" (anchors); ignored
+        return DayPlan(date.fromisoformat(raw["day"]), [PlanItem.from_json(i) for i in raw.get("items", [])])
 
     def open_items(self) -> list[PlanItem]:
         return [i for i in self.items if i.status == PLANNED]
 
+    def counted(self) -> list[PlanItem]:
+        """What counts toward the day's capacity: everything that was not skipped."""
+        return [i for i in self.items if i.status != SKIPPED]
+
 
 class PlanStore:
-    """One JSON file, a plan per day, written atomically. Corrupt files are set aside, never overwritten."""
+    """One JSON file: a plan per day plus the learned load, written atomically. Corrupt files are set aside, never overwritten."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._days: dict[date, DayPlan] = {}
+        self.load = Load()
         self._load()
 
     def _load(self) -> None:
@@ -177,6 +135,7 @@ class PlanStore:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             plans = [DayPlan.from_json(p) for p in raw["days"]]
             self._days = {p.day: p for p in plans}
+            self.load = Load.from_json(raw.get("load") or {})
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             quarantine = self._path.with_suffix(".corrupt")
             log.warning("Could not read the plan at %s; moved to %s and starting empty", self._path, quarantine)
@@ -184,12 +143,12 @@ class PlanStore:
                 os.replace(self._path, quarantine)
             except OSError:
                 pass
-            self._days = {}
+            self._days, self.load = {}, Load()
 
-    def _save(self, today: date) -> None:
+    def save(self, today: date) -> None:
         cutoff = today - timedelta(days=KEEP_DAYS)
         self._days = {d: p for d, p in self._days.items() if d >= cutoff}
-        payload = {"days": [p.to_json() for _, p in sorted(self._days.items())]}
+        payload = {"days": [p.to_json() for _, p in sorted(self._days.items())], "load": self.load.to_json()}
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".tmp")
@@ -203,21 +162,16 @@ class PlanStore:
     def get(self, day: date) -> DayPlan | None:
         return self._days.get(day)
 
-    def put(self, plan: DayPlan) -> None:
-        self._days[plan.day] = plan
-        self._save(plan.day)
+    def days(self) -> list[DayPlan]:
+        return [p for _, p in sorted(self._days.items())]
 
-    def tell(self, day: date, anchor: str, moment: datetime, habits: Habits, tz) -> DayPlan:
-        """Record a reported anchor ("cheguei", "saí", "cheguei em casa") and keep the day consistent.
-        Raises ValueError if it contradicts anchors already told (e.g. leaving before arriving)."""
-        if moment.tzinfo is None:
-            raise ValueError("moment must be timezone-aware")
-        plan = self._days.get(day) or DayPlan(day)
-        candidate = {**plan.told, anchor: moment}
-        resolve_anchors(day, candidate, habits, tz)  # validates name and order
-        plan.told = candidate
-        self.put(plan)
-        return plan
+    def put(self, plan: DayPlan, today: date | None = None) -> None:
+        self._days[plan.day] = plan
+        self.save(today or plan.day)
+
+    def drop_after(self, day: date) -> None:
+        """Forget every plan after `day` (the future is recomputed); the caller saves."""
+        self._days = {d: p for d, p in self._days.items() if d <= day}
 
     def mark(self, day: date, task_id: str, status: str) -> PlanItem | None:
         if status not in STATUSES:
@@ -227,5 +181,5 @@ class PlanStore:
         if item is None:
             return None
         item.status = status
-        self.put(plan)
+        self.save(day)
         return item
