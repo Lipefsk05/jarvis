@@ -54,6 +54,10 @@ Prompt em `persona/jarvis.md`. O timing do humor é decidido pelo **código**: o
 - Meta: poucos cliques, em 3 faixas — livre (leitura, inbox), revisão interna (checagem barata antes de agir), pede confirmação (dinheiro, terceiros, apagar de verdade, publicar).
 - Segredos só em `.env` (ignorado pelo git).
 
+## Planejador diário (2026-10-15)
+
+Um calendário de tarefas para o próximo mês, montado só com código (sem modelo), a partir do board do Mind. Sem horários e sem nada pra avisar durante o dia: o dono diz "concluí X" (ferramenta `concluir_tarefa`) e o Jarvis marca no plano e grava uma nota "concluída" no `inbox/jarvis/`, pro Claude propor marcar `[x]` no board. À meia-noite (ou ao subir, se o PC estava desligado) o planejador julga os dias que passaram: o que ficou aberto no board rola pro dia seguinte, na frente de tudo; o que sumiu do board conta como feito. A **capacidade** por dia começa em 3 (domingo 2, sábado 0, tempo sagrado) e acompanha a entrega: 2 dias seguidos com tudo feito sobe 1, 2 dias seguidos com sobra desce 1 (de 1 a 8). Quando o dono fecha todas as tarefas do dia, o Jarvis pergunta como está o tempo e se quer adiantar uma do dia seguinte. O plano de hoje fica estável durante o dia; os dias à frente são recalculados a cada refresh. Ordem de escolha: o que escorregou, prioridade/prazo (🔴 ou prazo em até 7 dias), lista por prioridade; ideias nunca; no máximo 2 tarefas por projeto no mesmo dia. Estado em `state/plano.json`. Comando: `/plano` (hoje) e `/plano semana`. Código: `plan.py` (modelo e armazém), `planner.py` (escolha, rolagem, "concluí"), `board.py` (leitor do board).
+
 ## Presença casa/fora
 
 Três estados: em casa perto (mic + caixa), em casa longe do PC (só Telegram), fora (mic e caixa sempre desligados). Sinal principal: celular na Wi-Fi de casa; comando manual como reserva; histerese contra oscilação. Atividade no teclado sozinha engana (acesso remoto). Plano B se o Wi-Fi do celular dormir: o próprio celular avisa o bot (automação no Android). **A validar por experimento.**
