@@ -17,6 +17,7 @@ class Command:
 COMMANDS = (
     Command("tarefas", "[área]", "Pendências do seu Mind", "pendências do Mind, por área."),
     Command("plano", "[semana]", "O plano de hoje", "tarefas de hoje; com \"semana\", os próximos dias."),
+    Command("agenda", "[dia]", "A agenda do Google", "compromissos das 3 agendas; sem dia, hoje."),
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind", "guarda uma nota no inbox."),
     Command("desfaz", "", "Desfaz a última nota", "apaga a última nota que guardei."),
     Command("lembra", "<quando> <o quê>", "Marca um lembrete", "marca um lembrete."),
@@ -37,7 +38,12 @@ NATURAL_LANGUAGE = (
     ("Áudio", "mande um áudio e eu respondo como se fosse texto"),
     ("Conversa", "tire dúvidas comigo no que eu sei"),
 )
-NOT_YET = "e-mail, agenda, responder em áudio e controlar o computador"
+AGENDA_LANGUAGE = (
+    ("Ver a agenda", "o que eu tenho amanhã?"),
+    ("Marcar na agenda", "marca reunião com o cliente sexta às 15"),
+    ("Mover ou cancelar", "muda o dentista pra segunda às 10"),
+)
+NOT_YET = "e-mail, responder em áudio e controlar o computador"
 
 
 def menu() -> list[tuple[str, str]]:
@@ -45,14 +51,14 @@ def menu() -> list[tuple[str, str]]:
     return [(c.name, c.summary) for c in COMMANDS]
 
 
-def format_help() -> str:
+def format_help(agenda: bool = False) -> str:
     """The help text, in Telegram HTML: the commands first, then the natural-language phrases, each on its own line."""
     lines = ["<b>Comandos</b>"]
     for c in COMMANDS:
         usage = f"/{c.name}" + (f" {html.escape(c.args, quote=False)}" if c.args else "")
         lines.append(f"{usage} — {html.escape(c.detail, quote=False)}")
     lines += ["", "<b>Em linguagem natural</b>"]
-    for what, example in NATURAL_LANGUAGE:
+    for what, example in NATURAL_LANGUAGE + (AGENDA_LANGUAGE if agenda else ()):
         lines += ["", f"<b>{html.escape(what, quote=False)}</b>", f"“{html.escape(example, quote=False)}”"]
     lines += ["", f"<b>Ainda não faço:</b> {NOT_YET}."]
     return "\n".join(lines)

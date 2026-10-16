@@ -140,6 +140,15 @@ class Assistant:
             and "?" in previous["content"] and has_reminder_intent(previous["content"])
         )
 
+    def _answers_agenda_question(self, chat_id: int, action: Action) -> bool:
+        """An event is asked for with a bare "Café" right after the assistant asked about the agenda: that is the answer."""
+        if action.name != "criar_evento":
+            return False
+        history = self._history.messages(chat_id)
+        previous = history[-2] if len(history) >= 2 else None
+        return bool(previous and previous["role"] == "assistant" and "?" in previous["content"]
+                    and "agenda" in previous["content"].lower())
+
     def _tasks(self, text: str) -> str:
         if self._mind_dir is None or not wants_tasks(text):
             return ""
@@ -156,6 +165,12 @@ class Assistant:
         elif action.name == "anotar":
             preview = action.texto if len(action.texto) <= 60 else action.texto[:57] + "…"
             question = f"Quer que eu anote “{preview}”, senhor? Diga \"sim\" para confirmar."
+        elif action.name == "criar_evento":
+            question = f'Quer que eu marque “{action.texto}” na agenda, senhor ({action.quando})? Diga "sim" para confirmar.'
+        elif action.name == "mover_evento":
+            question = f'Quer que eu mova “{action.busca}” para {action.quando}, senhor? Diga "sim" para eu procurar e confirmar.'
+        elif action.name == "cancelar_evento":
+            question = f'Quer que eu apague “{action.busca}” da agenda, senhor? Diga "sim" para eu procurar e confirmar.'
         elif action.name == "concluir_tarefa":
             question = f'Quer que eu registre “{action.tarefa}” como concluída, senhor? Diga "sim" para confirmar.'
         else:
@@ -199,7 +214,7 @@ class Assistant:
             self._offers[chat_id] = (self._clock(), action)
             self._history.add(chat_id, "assistant", question)
             return AssistantReply(question, provider=reply.provider)
-        if action is not None and not has_intent(action.name, text):
+        if action is not None and not has_intent(action.name, text) and not self._answers_agenda_question(chat_id, action):
             return self._unsure(chat_id, action, reply.provider)
         if action is not None:  # the system answers; any text the model also wrote is dropped
             return AssistantReply("", provider=reply.provider, action=action)

@@ -102,3 +102,35 @@ class ConcludeToolTest(unittest.TestCase):
         for said in ("concluí a landing", "terminei o relatório", "fiz o cadastro", "finalizei tudo"):
             self.assertTrue(has_intent("concluir_tarefa", said), said)
         self.assertFalse(has_intent("concluir_tarefa", "amanhã eu vejo a landing"))
+
+
+class AgendaActionsTest(unittest.TestCase):
+    def test_valid_calls(self):
+        from jarvis.commands import has_intent
+        self.assertEqual(parse_action(ToolCall("consultar_agenda", {"quando": " amanhã "})), Action("consultar_agenda", quando="amanhã"))
+        self.assertEqual(parse_action(ToolCall("consultar_agenda", {})), Action("consultar_agenda"))
+        self.assertEqual(
+            parse_action(ToolCall("criar_evento", {"titulo": "Dentista", "quando": "amanhã às 14", "duracao_minutos": None, "conta": None})),
+            Action("criar_evento", texto="Dentista", quando="amanhã às 14"))
+        self.assertEqual(
+            parse_action(ToolCall("criar_evento", {"titulo": "Dentista", "quando": "amanhã às 14", "duracao_minutos": 90, "conta": "pessoal"})),
+            Action("criar_evento", texto="Dentista", quando="amanhã às 14", duracao=90, conta="pessoal"))
+        self.assertEqual(parse_action(ToolCall("mover_evento", {"busca": "dentista", "quando": "sexta"})), Action("mover_evento", busca="dentista", quando="sexta"))
+        self.assertEqual(parse_action(ToolCall("cancelar_evento", {"busca": "dentista"})), Action("cancelar_evento", busca="dentista"))
+
+    def test_malformed_calls_are_ignored(self):
+        for call in (ToolCall("criar_evento", {"titulo": "x"}), ToolCall("criar_evento", {"titulo": "x", "quando": "amanhã", "duracao_minutos": 99999}),
+                     ToolCall("criar_evento", {"titulo": "x", "quando": "amanhã", "duracao_minutos": "abc"}),
+                     ToolCall("mover_evento", {"busca": "x"}), ToolCall("cancelar_evento", {}), ToolCall("cancelar_evento", {"busca": "  "})):
+            self.assertIsNone(parse_action(call), call)
+
+    def test_the_model_alone_cannot_change_the_agenda(self):
+        from jarvis.commands import has_intent
+        self.assertTrue(has_intent("criar_evento", "marca reunião amanhã às 15"))
+        self.assertFalse(has_intent("criar_evento", "tenho dentista amanhã às 14"))
+        self.assertTrue(has_intent("mover_evento", "muda o dentista pra segunda"))
+        self.assertTrue(has_intent("mover_evento", "adia a reunião pra sexta"))
+        self.assertFalse(has_intent("mover_evento", "o dentista é na segunda"))
+        self.assertTrue(has_intent("cancelar_evento", "cancela a reunião de sexta"))
+        self.assertFalse(has_intent("cancelar_evento", "a reunião de sexta foi boa"))
+        self.assertTrue(has_intent("consultar_agenda", "o que tenho amanhã?"))

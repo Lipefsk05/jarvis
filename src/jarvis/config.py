@@ -115,6 +115,9 @@ class Settings:
     timezone: str
     groq_reasoning: str = "low"
     talker_timeout_s: float = 15.0
+    calendars: str = ""  # 'trabalho=a@x.com,pessoal=b@y.com,cafe=c@z.com'; empty = no agenda
+    google_credentials: Path = Path("state/google-service-account.json")
+    tasks_calendar: str = ""  # id of the separate calendar where the day's tasks are mirrored; empty = off
 
     @classmethod
     def load(
@@ -131,6 +134,8 @@ class Settings:
         price_in = _opt_float(values.get("JARVIS_PRICE_IN_PER_MTOK"))
         price_out = _opt_float(values.get("JARVIS_PRICE_OUT_PER_MTOK"))
 
+        state_dir = Path(values.get("JARVIS_STATE_DIR") or REPO_ROOT / "state").expanduser()
+
         return cls(
             provider=provider,
             model=(values.get("JARVIS_TALKER_MODEL") or DEFAULT_MODELS.get(provider, "")).strip(),
@@ -146,12 +151,15 @@ class Settings:
             price_out=default_out if price_out is None else price_out,
             mind_dir=mind_dir,
             inbox_dir=Path(values.get("JARVIS_INBOX_DIR") or mind_dir / "inbox" / "jarvis").expanduser(),
-            state_dir=Path(values.get("JARVIS_STATE_DIR") or REPO_ROOT / "state").expanduser(),
+            state_dir=state_dir,
             persona_path=Path(values.get("JARVIS_PERSONA_PATH") or REPO_ROOT / "persona" / "jarvis.md"),
             history_messages=int(values.get("JARVIS_HISTORY_MESSAGES") or 32),
             timezone=(values.get("JARVIS_TIMEZONE") or "America/Sao_Paulo").strip(),
             groq_reasoning=_reasoning(values.get("JARVIS_GROQ_REASONING")),
             talker_timeout_s=_timeout(values.get("JARVIS_TALKER_TIMEOUT_S")),
+            calendars=(values.get("JARVIS_CALENDARS") or "").strip(),
+            tasks_calendar=(values.get("JARVIS_TASKS_CALENDAR") or "").strip(),
+            google_credentials=Path(values.get("JARVIS_GOOGLE_CREDENTIALS") or state_dir / "google-service-account.json").expanduser(),
         )
 
     def key_for(self, provider: str) -> str:

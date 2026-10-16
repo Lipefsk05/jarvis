@@ -23,11 +23,17 @@ from telegram.ext import (
     filters,
 )
 
-from .actions import Action
+from .actions import AGENDA_TOOLS, TOOLS, Action
+from .agenda import parse_accounts
+from .agenda_bot import UNDO_PREFIX, AgendaHandlers
+from .agenda_flow import AgendaFlow
+from .agenda_service import Agenda
+from .gcal import GoogleCalendar, authorized_session
+from .task_calendar import TaskCalendar, safe_sync
 from .assistant import Assistant
 from .audio import GroqTranscriber, TranscribeError, check_audio, transcript_line
 from .budget import Budget
-from .commands import asks_capabilities, parse_note_request, parse_reminder_request, task_query_words, wants_tasks
+from .commands import asks_capabilities, parse_note_request, parse_reminder_request, parse_event_request, task_query_words, wants_agenda, wants_tasks
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
@@ -92,7 +98,18 @@ def build_application(settings: Settings) -> Application:
     plans = PlanStore(settings.state_dir / "plano.json")
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
+    accounts = parse_accounts(settings.calendars)
+    agenda = agenda_calendar = None
+    if accounts and settings.google_credentials.is_file():
+        agenda_calendar = GoogleCalendar(authorized_session(str(settings.google_credentials)), tz)
+        agenda = Agenda(agenda_calendar, accounts, clock)
+    elif accounts:
+        log.warning("JARVIS_CALENDARS is set but %s does not exist: the agenda tools are off", settings.google_credentials.name)
+    task_calendar = None
+    if agenda is not None and settings.tasks_calendar:
+        task_calendar = TaskCalendar(agenda_calendar, settings.tasks_calendar, tz)
     assistant = Assistant(
+        tools=TOOLS if agenda else [t for t in TOOLS if t["function"]["name"] not in AGENDA_TOOLS],
         talker=build_talker(settings),
         budget=budget,
         gate=gate,
@@ -102,6 +119,7 @@ def build_application(settings: Settings) -> Application:
         estado_path=settings.state_dir / "estado_atual.md",
         mind_dir=settings.mind_dir,
     )
+    agenda_bot = AgendaHandlers(agenda, AgendaFlow(accounts), assistant, clock) if agenda else None
     transcriber = GroqTranscriber(settings.groq_api_key) if settings.groq_api_key else None
     allowed = filters.User(user_id=list(settings.allowed_ids))
 
@@ -147,6 +165,11 @@ def build_application(settings: Settings) -> Application:
             said = user_text or action.quando + (f", {action.antecedencia} min antes" if action.antecedencia else "")
             planned = flow.start(chat_id, said, clock(), text=action.texto, when=action.quando, lead=action.antecedencia)
             await store_reminder(message, chat_id, planned)
+        elif action.name in AGENDA_TOOLS:
+            if agenda_bot is None:
+                await message.reply_text("A agenda do Google ainda não está ligada, senhor.")
+            else:
+                await agenda_bot.run(message, chat_id, action, user_text)
         elif action.name == "concluir_tarefa":
             await finish_task(message, chat_id, action)
         elif action.name == "adiantar_tarefa":
@@ -170,7 +193,13 @@ def build_application(settings: Settings) -> Application:
         """Judge the days that passed and refill the calendar from the Mind's board (once a day, and on demand)."""
         tasks = await asyncio.to_thread(load_board, settings.mind_dir)
         rebalance(plans, tasks, clock().date())
+        await sync_task_calendar()
         return tasks
+
+    async def sync_task_calendar() -> None:
+        """Mirror the plan into the tasks calendar (all-day items), when it is turned on; it never breaks the plan."""
+        if task_calendar is not None:
+            await asyncio.to_thread(safe_sync, task_calendar, plans, clock().date())
 
     def _short(title: str, limit: int = 70) -> str:
         return title if len(title) <= limit else title[:limit - 1].rstrip() + "…"
@@ -195,6 +224,7 @@ def build_application(settings: Settings) -> Application:
                 write_note, settings.inbox_dir, f"Tarefa concluída: {item.title}{ref} ({item.area})", now, "jarvis-plano")
             notes.add(path)
             plan = plans.get(today)
+            await sync_task_calendar()  # the item reads "✓ ..." in the calendar
             reply = f"Registrado, senhor: “{_short(item.title)}” concluída. Hoje: {progress(plan)}."
             ahead = any(p.day > today and p.open_items() for p in plans.days())
             if plan is not None and not plan.open_items() and ahead:
@@ -208,7 +238,7 @@ def build_application(settings: Settings) -> Application:
         if item is None:
             reply = "Não há nada planejado pra frente, senhor."
         else:
-            await refresh_plan()
+            await refresh_plan()  # also syncs the tasks calendar
             reply = f"Passei “{_short(item.title)}” para hoje, senhor."
         await message.reply_text(reply)
         assistant.remember(chat_id, reply)
@@ -224,6 +254,7 @@ def build_application(settings: Settings) -> Application:
 
     async def plan_daily() -> None:
         """At midnight, or as soon as the bot starts if the PC was off, settle the past days and plan the next month."""
+        await sync_task_calendar()  # the plan may already be made for today: show it in the calendar right at the start
         while True:
             try:
                 if plans.load.rebalanced != clock().date():
@@ -240,6 +271,8 @@ def build_application(settings: Settings) -> Application:
         confirmed = assistant.confirm_offer(chat_id, text)
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
+            return
+        if agenda_bot is not None and await agenda_bot.answer(message, chat_id, text):  # a question about an event
             return
         answered = flow.answer(chat_id, text, clock())  # a question about a reminder is waiting for this message
         if answered is not None:
@@ -260,6 +293,12 @@ def build_application(settings: Settings) -> Application:
             return
         if asks_capabilities(text):  # the list comes from code, so it is always complete and right
             await send_help(message)
+            return
+        if agenda_bot is not None and parse_event_request(text):  # "marca ... amanhã às 15": code reads day, hour and title
+            await agenda_bot.run(message, chat_id, Action("criar_evento", texto="", quando=""), text)
+            return
+        if agenda_bot is not None and wants_agenda(text):  # "o que tenho amanhã?": the calendar, decided by code
+            await agenda_bot.run(message, chat_id, Action("consultar_agenda", quando=text), text)
             return
         if wants_tasks(text):  # same readable answer as /tarefas, no model call
             await reply_tasks(message, task_query_words(text))
@@ -415,7 +454,7 @@ def build_application(settings: Settings) -> Application:
 
     async def send_help(message) -> None:
         await message.reply_text(
-            format_help(), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)
+            format_help(agenda=agenda is not None), parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
 
     async def on_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -423,6 +462,14 @@ def build_application(settings: Settings) -> Application:
 
     async def on_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await reply_tasks(update.effective_message, task_query_words(" ".join(context.args or []), min_len=3))
+
+    async def on_agenda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        if agenda_bot is None:
+            await message.reply_text("A agenda do Google ainda não está ligada, senhor.")
+            return
+        when = message.text.partition(" ")[2].strip()
+        await agenda_bot.run(message, update.effective_chat.id, Action("consultar_agenda", quando=when), when)
 
     async def on_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(UNKNOWN_COMMAND)
@@ -453,6 +500,12 @@ def build_application(settings: Settings) -> Application:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         await query.answer("Anotado, senhor.")
         await query.edit_message_reply_markup(reply_markup=None)
+
+    async def on_event_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.callback_query.from_user.id not in settings.allowed_ids:
+            await update.callback_query.answer()
+            return
+        await agenda_bot.undo(update, context)
 
     async def on_any(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -531,6 +584,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler("plano", on_plan, filters=allowed))
+    app.add_handler(CommandHandler("agenda", on_agenda, filters=allowed))
     app.add_handler(CommandHandler(["ajuda", "help"], on_help, filters=allowed))
     app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.COMMAND, on_unknown))
@@ -542,6 +596,8 @@ def build_application(settings: Settings) -> Application:
         on_unsupported,
     ))
     app.add_handler(CallbackQueryHandler(on_not_funny, pattern=f"^{NOT_FUNNY}$"))
+    if agenda_bot is not None:
+        app.add_handler(CallbackQueryHandler(on_event_undo, pattern=f"^{UNDO_PREFIX}:"))
     app.add_handler(MessageHandler(~allowed, on_stranger), group=1)
     return app
 

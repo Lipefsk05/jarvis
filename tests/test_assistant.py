@@ -334,3 +334,29 @@ class OfferConfirmationTest(ReminderGuardTest):
     def test_a_yes_with_no_offer_does_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(self.make(tmp, FakeTalker()).confirm_offer(1, "sim"))
+
+
+class AgendaFollowUpTest(unittest.TestCase):
+    def make(self, tmp, calls):
+        talker = FakeTalker([Reply("", 100, 10, tool_call=call) for call in calls])
+        budget = Budget(Path(tmp) / "usage.json", 10.0, 1.0, 5.0, clock=lambda: NOW)
+        return Assistant(talker=talker, budget=budget, gate=HumorGate(min_gap=2), history=History(),
+                         template=TEMPLATE, clock=lambda: NOW)
+
+    def event(self):
+        return ToolCall("criar_evento", {"titulo": "Reunião", "quando": "amanhã às 11"})
+
+    def test_a_bare_account_name_after_a_question_about_the_agenda_creates_the_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.make(tmp, [self.event()])
+            a._history.add(1, "user", "Marca reunião amanhã às 11")
+            a.remember(1, "Em qual agenda devo registrar, senhor: profissional, pessoal ou Café Labs?")
+            reply = a.respond(1, "Café")
+            self.assertEqual(reply.action.name, "criar_evento")
+
+    def test_without_that_question_a_bare_word_only_asks_for_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self.make(tmp, [self.event()])
+            reply = a.respond(1, "Café")
+            self.assertIsNone(reply.action)
+            self.assertIn("Quer que eu marque", reply.text)

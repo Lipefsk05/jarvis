@@ -125,3 +125,39 @@ class MisheardReminderTest(unittest.TestCase):
         for text in ("me lembro que ontem às 9 eu fui lá", "me lembro de tudo", "me lembro quando era criança",
                      "me lembro", "me lembro disso", "me lembra amanhã às 9"):
             self.assertIsNone(parse_misheard_request(text), text)
+
+
+class WantsAgendaTest(unittest.TestCase):
+    def test_questions_about_the_calendar(self):
+        from jarvis.commands import wants_agenda
+        for text in ("O que eu tenho amanhã?", "oque tenho essa semana", "o que tem na sexta", "como está minha agenda hoje",
+                     "quais reuniões tenho segunda?", "tenho algum compromisso dia 20?"):
+            self.assertTrue(wants_agenda(text), text)
+
+    def test_tasks_reminders_and_plain_statements_are_not(self):
+        from jarvis.commands import wants_agenda
+        for text in ("o que eu tenho pra fazer hoje?", "quais tarefas tenho essa semana", "me lembra amanhã às 9",
+                     "tenho dentista amanhã às 14", "o que tem de lembrete hoje", "oi tudo bem",
+                     "marca reunião amanhã às 15", "cancela a reunião de sexta", "muda o evento pra segunda", "põe na agenda dentista amanhã"):
+            self.assertFalse(wants_agenda(text), text)
+
+
+class EventRequestTest(unittest.TestCase):
+    def test_a_creating_verb_with_a_day_or_an_hour_is_a_request(self):
+        from jarvis.commands import parse_event_request
+        for text in ("Marca amanhã uma reunião às 15", "põe na agenda dentista sexta", "agende uma consulta dia 20 às 10",
+                     "Marca uma reuniao hoje as 16 e outra as 22", "coloca almoço amanhã às 12"):
+            self.assertTrue(parse_event_request(text), text)
+
+    def test_other_sentences_are_not(self):
+        from jarvis.commands import parse_event_request
+        for text in ("cria um app novo", "me lembra amanhã às 9", "anota reunião amanhã às 10", "o que tenho amanhã?",
+                     "tenho reunião amanhã às 15", "marca como feita a tarefa de hoje"):
+            self.assertFalse(parse_event_request(text), text)
+
+    def test_a_statement_is_not_an_agenda_question(self):
+        from jarvis.commands import wants_agenda
+        self.assertFalse(wants_agenda("Maca amanha uma reuniao as 11 e outra as 19"))
+        self.assertFalse(wants_agenda("tenho uma reunião amanhã"))
+        self.assertFalse(wants_agenda("o que tenho amanhã às 15?"))
+        self.assertTrue(wants_agenda("o que tenho amanhã"))

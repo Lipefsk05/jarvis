@@ -49,6 +49,13 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(self.load({"JARVIS_GROQ_REASONING": "Medium"}).groq_reasoning, "medium")
         self.assertEqual(self.load({"JARVIS_GROQ_REASONING": "ultra"}).groq_reasoning, "low")
 
+    def test_calendars_are_off_by_default_and_the_key_lives_in_state(self):
+        s = self.load({"JARVIS_STATE_DIR": "/tmp/st"})
+        self.assertEqual(s.calendars, "")
+        self.assertEqual(str(s.google_credentials), "/tmp/st/google-service-account.json")
+        s = self.load({"JARVIS_CALENDARS": " cafe=admin@cafelabs.net ", "JARVIS_GOOGLE_CREDENTIALS": "/tmp/k.json"})
+        self.assertEqual((s.calendars, str(s.google_credentials)), ("cafe=admin@cafelabs.net", "/tmp/k.json"))
+
     def test_mind_dir_and_inbox_default(self):
         s = self.load({"JARVIS_MIND_DIR": "/tmp/somevault"})
         self.assertEqual(str(s.mind_dir), "/tmp/somevault")

@@ -10,6 +10,9 @@ MAX_NOTE_CHARS = 2000
 MAX_AREA_CHARS = 80
 MAX_WHEN_CHARS = 80
 MAX_LEAD_MINUTES = 24 * 60
+MAX_EVENT_MINUTES = 24 * 60
+MAX_REF_CHARS = 400
+AGENDA_TOOLS = frozenset({"consultar_agenda", "criar_evento", "mover_evento", "cancelar_evento"})
 
 
 def _tool(name: str, description: str, properties: dict | None = None, required: list[str] | None = None) -> dict:
@@ -69,6 +72,44 @@ TOOLS = [
         {"tarefa": {"type": "string", "description": "As palavras dele sobre qual tarefa foi concluída, curtas (\"landing do dindin\")."}},
         ["tarefa"],
     ),
+    _tool(
+        "consultar_agenda",
+        "Mostra os compromissos da agenda do Google do senhor (as três contas juntas), somente leitura. Chame quando "
+        "ele perguntar o que tem na agenda, que compromissos ou reuniões tem, ou se está livre num dia. Não é a lista "
+        "de tarefas do Mind nem os lembretes.",
+        {"quando": {"type": "string", "description": "O dia nas palavras dele: \"hoje\", \"amanhã\", \"sexta\", \"dia 20\", \"essa semana\". Vazio para hoje."}},
+    ),
+    _tool(
+        "criar_evento",
+        "Marca um compromisso na agenda do Google do senhor (com hora e duração; diferente de lembrete, que é só um "
+        "aviso). Chame quando ele pedir para marcar, agendar ou pôr na agenda uma reunião, consulta, evento ou "
+        "compromisso. Um compromisso só contado (\"tenho dentista amanhã\") é conversa. Nunca calcule datas: passe o "
+        "momento com as palavras dele.",
+        {
+            "titulo": {"type": "string", "description": "O que é, curto (\"Reunião com o cliente\", \"Dentista\")."},
+            "quando": {"type": "string", "description": "O momento nas palavras do senhor: \"amanhã às 15\", \"sexta às 10h\"."},
+            "duracao_minutos": {"type": ["integer", "null"], "description": "Só se ele disser quanto dura: \"por 2 horas\" = 120."},
+            "conta": {"type": ["string", "null"], "description": "Só se ele DISSE em qual agenda: pessoal, trabalho (profissional) ou Café. Nunca pergunte nem escolha: sem ele dizer, deixe vazio e o sistema pergunta."},
+        },
+        ["titulo", "quando"],
+    ),
+    _tool(
+        "mover_evento",
+        "Muda o dia ou a hora de um compromisso que já está na agenda do Google. Chame quando o senhor pedir para "
+        "mover, remarcar, adiar, antecipar ou passar um compromisso para outro momento.",
+        {
+            "busca": {"type": "string", "description": "Palavras do título do compromisso (\"reunião com o cliente\")."},
+            "quando": {"type": "string", "description": "O novo momento nas palavras dele: \"sexta às 10\"."},
+        },
+        ["busca", "quando"],
+    ),
+    _tool(
+        "cancelar_evento",
+        "Apaga um compromisso da agenda do Google. Chame quando o senhor pedir para cancelar, apagar ou desmarcar um "
+        "compromisso, reunião ou evento da agenda (não um lembrete).",
+        {"busca": {"type": "string", "description": "Palavras do título do compromisso."}},
+        ["busca"],
+    ),
     _tool("ver_gasto", "Mostra as chamadas, os tokens e o custo de hoje, com o teto diário. Chame quando o senhor perguntar quanto gastou ou usou."),
     _tool("mostrar_ajuda", "Mostra a lista do que o assistente sabe fazer. Chame quando o senhor perguntar o que você faz, como usar você, quais são seus comandos ou funções, ou pedir ajuda com o próprio assistente."),
     _tool("limpar_conversa", "Apaga o histórico da conversa atual. Chame quando o senhor pedir para esquecer ou recomeçar a conversa."),
@@ -86,6 +127,9 @@ class Action:
     numero: int = 0
     busca: str = ""
     tarefa: str = ""  # which task he says he finished
+    duracao: int = 0  # minutes an event lasts (0 = not said)
+    conta: str = ""  # which calendar he named, in his words
+    ref: str = ""  # set by the code once an event was found and confirmed: "trabalho:id1;cafe:id2"
 
 
 def _clean(value: object, limit: int) -> str:
@@ -129,4 +173,19 @@ def parse_action(call: ToolCall | None) -> Action | None:
     if call.name == "concluir_tarefa":
         tarefa = _clean(call.arguments.get("tarefa"), MAX_NOTE_CHARS)
         return Action("concluir_tarefa", tarefa=tarefa) if tarefa else None
+    if call.name == "consultar_agenda":
+        return Action("consultar_agenda", quando=_clean(call.arguments.get("quando"), MAX_WHEN_CHARS))
+    if call.name == "criar_evento":
+        texto, quando = _clean(call.arguments.get("titulo"), MAX_NOTE_CHARS), _clean(call.arguments.get("quando"), MAX_WHEN_CHARS)
+        minutes = _int(call.arguments["duracao_minutos"]) if call.arguments.get("duracao_minutos") not in (None, "") else 0
+        if not texto or not quando or minutes is None or not 0 <= minutes <= MAX_EVENT_MINUTES:
+            return None
+        return Action("criar_evento", texto=texto, quando=quando, duracao=minutes,
+                      conta=_clean(call.arguments.get("conta"), MAX_AREA_CHARS))
+    if call.name == "mover_evento":
+        busca, quando = _clean(call.arguments.get("busca"), MAX_AREA_CHARS), _clean(call.arguments.get("quando"), MAX_WHEN_CHARS)
+        return Action("mover_evento", busca=busca, quando=quando) if busca and quando else None
+    if call.name == "cancelar_evento":
+        busca = _clean(call.arguments.get("busca"), MAX_AREA_CHARS)
+        return Action("cancelar_evento", busca=busca) if busca else None
     return Action(call.name)

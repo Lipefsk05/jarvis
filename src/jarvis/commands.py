@@ -76,11 +76,17 @@ _NOTE_INTENT = re.compile(r"\b(?:anot\w*|registr\w*|guard\w*|salv\w*|notas?|esqu
 _DONE_INTENT = re.compile(r"\b(?:conclu\w*|termin\w*|finaliz\w*|acab\w*|fiz\b|fechei|resolvi|complet\w*|feit[oa]s?\b|pront[oa]s?\b|entreguei)")
 
 
+_EVENT_CREATE_INTENT = re.compile(r"\b(?:marc\w*|agend\w*|cri\w*|coloc\w*|bot\w*|pon\w*|adicion\w*|reserv\w*|inclu\w*|anot\w*)")
+_EVENT_MOVE_INTENT = re.compile(r"\b(?:mov\w*|remarc\w*|adi[ae]\w*|troc\w*|pass(?:a|e|ar)\b|mud\w*|transfer\w*|antecip\w*|atras\w*|jog\w*)")
+
+
 def has_intent(action: str, text: str) -> bool:
     """Did the user's own words ask for this action? Only the actions that change things or may confuse are checked."""
     folded = fold(text)
     pattern = {"cancelar_lembrete": _CANCEL_INTENT, "listar_lembretes": _LIST_INTENT,
-               "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT, "concluir_tarefa": _DONE_INTENT}.get(action)
+               "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT, "concluir_tarefa": _DONE_INTENT,
+               "criar_evento": _EVENT_CREATE_INTENT, "mover_evento": _EVENT_MOVE_INTENT,
+               "cancelar_evento": _CANCEL_INTENT}.get(action)
     if pattern is None:
         return True
     return bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))
@@ -131,6 +137,40 @@ def asks_capabilities(text: str) -> bool:
         return True
     # Long messages are about something else ("o que você pode fazer com o meu deploy ...").
     return len(folded.split()) <= 9 and bool(_CAPABILITIES.search(folded))
+
+
+_AGENDA_ASK = re.compile(
+    r"(?:^|\W)(?:o ?q(?:ue)?|oq|quais?|que)\b[^?.!]*\b(?:tenho|tem|ha|marcado|agendado|compromissos?|reunioes|eventos)\b"
+    r"|\b(?:agenda|compromissos?|reuni(?:ao|oes)|eventos?)\b"
+)
+_AGENDA_DAY = re.compile(r"\b(?:hoje|amanha|semana|segunda|terca|quarta|quinta|sexta|sabado|domingo|dia \d{1,2})\b")
+_NOT_AGENDA = re.compile(
+    r"\b(?:fazer|tarefas?|pendencias?|pendentes?|afazeres|lembretes?|lembrar|lembra)\b"
+    r"|^\W*agenda\b|\b(?:marc\w*|agend(?:e|ar|ei)|cri\w*|coloc\w*|pon[hd]?\w*|poe\b|adicion\w*|mov\w*|remarc\w*|desmarc\w*|cancel\w*|apag\w*|mud\w*|troc\w*|adi[ae]\w*)\b"
+)
+
+
+_EVENT_REQUEST = re.compile(r"^\W*(?:marc\w*|agend(?:e|ar)|agenda|po[ei]\w*|pon[hd]\w*|coloc\w*|bot[ae]\w*|cri[ae]\w*|adicion\w*)\b")
+_CLOCK = re.compile(r"\b(?:as|a)\s+\d{1,2}(?:h\d{0,2}|:\d{2})?\b|\b\d{1,2}(?:h\d{0,2}|:\d{2})\b|\bmeio[- ]dia\b")
+_NOT_EVENT = re.compile(r"\b(?:lembr\w*|tarefas?|nota|notas|anot\w*|aviso|avisa\w*)\b")
+_QUESTION_START = re.compile(r"^\W*(?:o ?q(?:ue)?|oq|quais?|qual|como|tem|ha|ta|esta)\b")
+
+
+def parse_event_request(text: str) -> bool:
+    """"marca amanhã uma reunião às 15", "põe na agenda dentista sexta às 10": a request to put something on the
+    calendar, handled by code. It needs a creating verb AND a day or an hour, so "cria um app" is left alone."""
+    folded = fold(text)
+    return bool(_EVENT_REQUEST.match(folded) and (_AGENDA_DAY.search(folded) or _CLOCK.search(folded))
+                and not _NOT_EVENT.search(folded))
+
+
+def wants_agenda(text: str) -> bool:
+    """"o que tenho amanhã?", "como está a agenda essa semana?": a question about the calendar, not the task list.
+    Words of tasks or reminders ("o que tenho pra fazer hoje") keep it out."""
+    folded = fold(text)
+    asked = "?" in text or bool(_QUESTION_START.match(folded))  # a statement ("uma reunião amanhã às 11") is not a question
+    return (asked and bool(_AGENDA_ASK.search(folded)) and bool(_AGENDA_DAY.search(folded))
+            and not _NOT_AGENDA.search(folded) and not _CLOCK.search(folded))
 
 
 def wants_tasks(text: str) -> bool:
