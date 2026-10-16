@@ -535,17 +535,21 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "google-auth" },
     { name = "google-genai" },
     { name = "groq" },
     { name = "python-telegram-bot" },
+    { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic" },
+    { name = "google-auth", specifier = ">=2.61.0" },
     { name = "google-genai" },
     { name = "groq", specifier = ">=1.7.0" },
     { name = "python-telegram-bot" },
+    { name = "requests", specifier = ">=2.34.2" },
 ]
 
 [[package]]

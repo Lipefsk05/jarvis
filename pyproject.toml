@@ -8,6 +8,8 @@ dependencies = [
     "anthropic",
     "google-genai",
     "groq>=1.7.0",
+    "google-auth>=2.61.0",
+    "requests>=2.34.2",
 ]
 
 [build-system]
