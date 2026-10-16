@@ -254,7 +254,10 @@ def build_application(settings: Settings) -> Application:
 
     async def plan_daily() -> None:
         """At midnight, or as soon as the bot starts if the PC was off, settle the past days and plan the next month."""
-        await sync_task_calendar()  # the plan may already be made for today: show it in the calendar right at the start
+        try:  # a restart after a change in the board or in the rules re-reads both now, not only at midnight
+            await refresh_plan()
+        except Exception:
+            log.exception("Plan refresh at start failed")
         while True:
             try:
                 if plans.load.rebalanced != clock().date():

@@ -280,3 +280,15 @@ class FindTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StudyTaskTest(Base):
+    def test_a_study_task_is_dropped_from_a_plan_made_before_it_was_marked(self):
+        english, bills = task("Inglês fluente", HIGH, area="carreira"), task("Pagar luz", HIGH, area="casa")
+        rebalance(self.store, [english, bills], WED)
+        self.assertIn("Inglês fluente", [i.title for i in self.store.get(WED).items])
+        marked = task("Inglês fluente", HIGH, area="carreira", study=True)  # the Felipe marks it 📚 later
+        rebalance(self.store, [marked, bills], WED)
+        every = [i.title for plan in self.store.days() for i in plan.items]
+        self.assertNotIn("Inglês fluente", every)
+        self.assertIn("Pagar luz", every)

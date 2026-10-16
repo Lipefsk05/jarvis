@@ -18,6 +18,7 @@ BOARD = """\
 - [ ] 🟢 Implementar a tela de login do app ⏱ 2h
 - [ ] 💡 Ideia: app de looks
 - [ ] Estudar canto 📱
+- [ ] 🔴 📚 Inglês fluente ^vc-ingles
 - [ ] 🔴 Subir o site 💻 ⛓ depende de ^vc-aluguel ^vc-site
 - [ ] 🟡 Fechar contrato ⛓ depende do aceite
 - [x] 🔴 Já feito
@@ -42,7 +43,7 @@ class BoardTest(unittest.TestCase):
         self.tasks = {t.title: t for t in load_board(root)}
 
     def test_only_open_bullets_and_no_index_files(self):
-        self.assertEqual(len(self.tasks), 9)
+        self.assertEqual(len(self.tasks), 10)
         self.assertNotIn("Já feito", self.tasks)
         self.assertFalse(any("índice" in t for t in self.tasks))
 
@@ -80,6 +81,7 @@ class BoardTest(unittest.TestCase):
         titles = {k: [t.title for t in v] for k, v in buckets.items()}
         self.assertEqual(titles["prioridade"], ["Pagar o aluguel"])  # the site is blocked by it
         self.assertEqual(titles["ideias"], ["Ideia: app de looks"])
+        self.assertEqual(titles["estudos"], ["Inglês fluente"])  # 🔴 but 📚: out of the daily plan
         self.assertIn("Subir o site", titles["lista"])
         self.assertIn("Fechar contrato", titles["lista"])
 

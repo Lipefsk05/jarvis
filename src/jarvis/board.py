@@ -1,6 +1,6 @@
 """The Mind's task board as the planner needs it: pending tasks with their markers (stdlib only, read-only).
 
-Markers are the ones in tarefas/tarefas.md: 🔴🟡🟢 priority, 💡 idea, 📅 AAAA-MM-DD deadline, a trailing ^id,
+Markers are the ones in tarefas/tarefas.md: 🔴🟡🟢 priority, 💡 idea, 📚 study (never in the daily plan), 📅 AAAA-MM-DD deadline, a trailing ^id,
 and ⛓ depende de ^id. Two optional ones say *where* and *how long*: 📱 (phone is enough), 💻 (needs the
 notebook) and ⏱ 30min / ⏱ 2h. Without a marker, where is guessed from the words ("ligar", "pagar", "estudar"
 = phone) and defaults to the notebook, so nothing heavy is ever sent to the bus by accident. Only the board is
@@ -61,6 +61,7 @@ class BoardTask:
     needs: str          # NOTEBOOK | PHONE
     needs_marked: bool  # needs came from 📱/💻, not from the word guess
     minutes: int        # 0 = unknown
+    study: bool = False  # 📚: waits for a study plan, never in the daily plan
 
     @property
     def key(self) -> str:
@@ -95,6 +96,7 @@ def parse_task(group: str, area: str, section: str, indent: str, body: str) -> B
     lead = text[:14]  # the priority emoji sits right after the checkbox
     priority = next((p for emoji, p in _PRIORITY.items() if emoji in lead), UNRANKED)
     idea = "💡" in lead
+    study = "📚" in lead
     due = None
     due_match = _DUE.search(text)
     if due_match:
@@ -117,7 +119,7 @@ def parse_task(group: str, area: str, section: str, indent: str, body: str) -> B
         needs, marked = guess_needs(plain), False
     return BoardTask(
         group, area, section, short_title(_clean(text)), len(indent) // 2, priority, idea, due, task_id, depends,
-        waits, needs, marked, _minutes(text),
+        waits, needs, marked, _minutes(text), study,
     )
 
 
@@ -126,7 +128,7 @@ def _clean(text: str) -> str:
     text = _DUE.sub("", text)
     text = _DEPENDS.sub("", text)
     text = _MINUTES.sub("", text)
-    for symbol in ("🔴", "🟡", "🟢", "💡", "📱", "💻", "⛓"):
+    for symbol in ("🔴", "🟡", "🟢", "💡", "📚", "📱", "💻", "⛓"):
         text = text.replace(symbol, "")
     return text.strip()
 
@@ -164,12 +166,14 @@ def blocked(task: BoardTask, open_ids: set[str]) -> bool:
 
 def split(tasks: list[BoardTask], today: date) -> dict[str, list[BoardTask]]:
     """The three buckets of the planner: `prioridade` (high, or a deadline within a week), `lista` (the rest,
-    rises when there is room) and `ideias` (never planned). Blocked tasks are left out of `prioridade`."""
+    rises when there is room) and `ideias` and `estudos` (never planned: ideas are only recalled, study waits for its own plan). Blocked tasks are left out of `prioridade`."""
     open_ids = {t.task_id for t in tasks if t.task_id}
-    buckets: dict[str, list[BoardTask]] = {"prioridade": [], "lista": [], "ideias": []}
+    buckets: dict[str, list[BoardTask]] = {"prioridade": [], "lista": [], "ideias": [], "estudos": []}
     for task in tasks:
         if task.idea:
             buckets["ideias"].append(task)
+        elif task.study:
+            buckets["estudos"].append(task)
         elif not blocked(task, open_ids) and (task.priority == HIGH or (task.due and (task.due - today).days <= 7)):
             buckets["prioridade"].append(task)
         else:
