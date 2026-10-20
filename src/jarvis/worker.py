@@ -45,11 +45,13 @@ class Job:
     finished: datetime | None = None
     result: str = ""
     seconds: float = 0.0
+    kind: str = "pedido"  # "pedido" (asked by the user, capped per day) or "resumo" (the daily digest)
 
     def to_json(self) -> dict:
         return {
             "id": self.id, "request": self.request, "status": self.status, "created": self.created.isoformat(),
             "finished": self.finished.isoformat() if self.finished else None, "result": self.result, "seconds": self.seconds,
+            "kind": self.kind,
         }
 
     @staticmethod
@@ -60,6 +62,7 @@ class Job:
             created=datetime.fromisoformat(raw["created"]),
             finished=datetime.fromisoformat(finished) if finished else None,
             result=str(raw.get("result") or ""), seconds=float(raw.get("seconds") or 0),
+            kind=str(raw.get("kind") or "pedido"),
         )
 
 
@@ -96,8 +99,8 @@ class JobStore:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, self._path)
 
-    def add(self, request: str, now: datetime) -> Job:
-        job = Job(self._next_id, request, QUEUED, now)
+    def add(self, request: str, now: datetime, kind: str = "pedido") -> Job:
+        job = Job(self._next_id, request, QUEUED, now, kind=kind)
         self._next_id += 1
         self._items[job.id] = job
         self._save()
@@ -118,7 +121,7 @@ class JobStore:
 
     def started_on(self, day: date) -> int:
         """Jobs created that day, whatever happened to them (they all spent, or tried to spend, quota)."""
-        return sum(1 for j in self._items.values() if j.created.date() == day)
+        return sum(1 for j in self._items.values() if j.kind == "pedido" and j.created.date() == day)
 
 
 @dataclass(frozen=True)
@@ -128,16 +131,16 @@ class Outcome:
     status: str = DONE
 
 
-Runner = Callable[[str, Path, float], Awaitable[Outcome]]
+Runner = Callable[..., Awaitable[Outcome]]  # (request, cwd, timeout) and, for digests, tools=""
 
 
-async def run_claude(request: str, cwd: Path, timeout_s: float, binary: str = "claude") -> Outcome:
-    """One `claude -p` call: read-only tools, no user/project settings (small context), no session saved.
-    The request goes through stdin, never through the command line."""
+async def run_claude(request: str, cwd: Path, timeout_s: float, binary: str = "claude", tools: str = "Read,Grep,Glob") -> Outcome:
+    """One `claude -p` call: read-only tools (none when `tools` is empty), no user/project settings (small context),
+    no session saved. The request goes through stdin, never through the command line."""
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # the subscription pays, never a stray key
     try:
         proc = await asyncio.create_subprocess_exec(
-            binary, "-p", "--output-format", "json", "--tools", "Read,Grep,Glob", "--setting-sources", "",
+            binary, "-p", "--output-format", "json", "--tools", tools, "--setting-sources", "",
             "--no-session-persistence", "--permission-mode", "dontAsk", "--append-system-prompt", BRIEFING,
             cwd=str(cwd), env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -194,6 +197,7 @@ class Worker:
         self._daily_max = daily_max
         self._runner = runner or run_claude
         self._queue: asyncio.Queue[int] = asyncio.Queue()
+        self._digests: dict[int, str] = {}  # job id -> prompt kept in memory only: it holds the text of the mails
 
     def submit(self, request: str) -> Job:
         """Queue a request or raise WorkerError saying why not."""
@@ -205,6 +209,13 @@ class Worker:
         if self._store.started_on(self._clock().date()) >= self._daily_max:
             raise WorkerError(f"Já fiz {self._daily_max} pedidos ao Trabalhador hoje, senhor; cada um gasta a cota da assinatura. Amanhã há mais.")
         job = self._store.add(request, self._clock())
+        self._queue.put_nowait(job.id)
+        return job
+
+    def submit_digest(self, label: str, prompt: str) -> Job:
+        """Queue a digest (no tools, outside the daily cap). The prompt is never written to disk."""
+        job = self._store.add(label, self._clock(), kind="resumo")
+        self._digests[job.id] = prompt
         self._queue.put_nowait(job.id)
         return job
 
@@ -224,7 +235,11 @@ class Worker:
         self._store.update(job)
         started = self._clock()
         try:
-            outcome = await self._runner(job.request, self._cwd, self._timeout)
+            prompt = self._digests.pop(job.id, None)
+            if prompt is None:
+                outcome = await self._runner(job.request, self._cwd, self._timeout)
+            else:
+                outcome = await self._runner(prompt, self._cwd, self._timeout, tools="")
         except Exception as exc:
             log.exception("Job %s failed", job.id)
             outcome = Outcome(False, f"falha inesperada ({type(exc).__name__})", FAILED)
@@ -237,6 +252,8 @@ class Worker:
 
 
 def format_delivery(job: Job) -> str:
+    if job.kind == "resumo":
+        return f"{job.request}, senhor:\n\n{job.result}" if job.status == DONE else f"Não consegui montar o resumo ({job.request}): {job.result}."
     if job.status == DONE:
         return f"Trabalhador, pedido {job.id} pronto, senhor:\n\n{job.result}"
     return f"O pedido {job.id} ao Trabalhador não deu certo, senhor: {job.result}."

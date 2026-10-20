@@ -21,6 +21,7 @@ COMMANDS = (
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind", "guarda uma nota no inbox."),
     Command("pede", "<pedido>", "Pede ao Trabalhador (Claude Code)", "o Trabalhador pesquisa no Mind em segundo plano e avisa quando termina; só leitura."),
     Command("pedidos", "", "Pedidos ao Trabalhador", "lista os últimos pedidos ao Trabalhador."),
+    Command("emails", "", "Resumo dos e-mails das últimas 24 h", "resumo dos e-mails recentes (só leitura); todo dia de manhã mando um sozinho."),
     Command("desfaz", "", "Desfaz a última nota", "apaga a última nota que guardei."),
     Command("lembra", "<quando> <o quê>", "Marca um lembrete", "marca um lembrete."),
     Command("lembretes", "", "Lista os lembretes pendentes", "lista os lembretes, com número."),
@@ -45,7 +46,7 @@ AGENDA_LANGUAGE = (
     ("Marcar na agenda", "marca reunião com o cliente sexta às 15"),
     ("Mover ou cancelar", "muda o dentista pra segunda às 10"),
 )
-NOT_YET = "e-mail, responder em áudio e controlar o computador (o Trabalhador só lê)"
+NOT_YET = "responder em áudio e controlar o computador (o Trabalhador só lê)"
 
 
 def menu() -> list[tuple[str, str]]:

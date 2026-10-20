@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .mail import MailAccount, parse_accounts as parse_mail_accounts
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_MODELS = {
@@ -64,6 +66,15 @@ def _timeout(value: str | None) -> float:
     """Seconds one provider call may take. Voice needs a low value; unknown or silly values fall back to 15."""
     number = _opt_float(value)
     return number if number is not None and 1 <= number <= 60 else 15.0
+
+
+def _hour(value: str | None) -> int:
+    """Hour (0-23) for the daily digest; unknown values fall back to 7."""
+    try:
+        number = int((value or "").strip())
+    except ValueError:
+        return 7
+    return number if 0 <= number <= 23 else 7
 
 
 def _worker_timeout(value: str | None) -> float:
@@ -137,6 +148,8 @@ class Settings:
     google_credentials: Path = Path("state/google-service-account.json")
     tasks_calendar: str = ""  # id of the separate calendar where the day's tasks are mirrored; empty = off
     worker_timeout_s: float = 300.0  # how long one Worker job (claude -p) may run
+    mail_accounts: tuple[MailAccount, ...] = ()  # read-only IMAP accounts from JARVIS_IMAP_<NAME>_USER/_PASSWORD
+    digest_hour: int = 7  # hour of the day (0-23) from which the daily e-mail digest is due
     worker_daily_max: int = 10  # Worker jobs per day: each one spends the Pro subscription quota
 
     @classmethod
@@ -179,6 +192,8 @@ class Settings:
             talker_timeout_s=_timeout(values.get("JARVIS_TALKER_TIMEOUT_S")),
             calendars=(values.get("JARVIS_CALENDARS") or "").strip(),
             tasks_calendar=(values.get("JARVIS_TASKS_CALENDAR") or "").strip(),
+            mail_accounts=parse_mail_accounts(values),
+            digest_hour=_hour(values.get("JARVIS_DIGEST_HOUR")),
             worker_timeout_s=_worker_timeout(values.get("JARVIS_WORKER_TIMEOUT_S")),
             worker_daily_max=_worker_daily_max(values.get("JARVIS_WORKER_DAILY_MAX")),
             google_credentials=Path(values.get("JARVIS_GOOGLE_CREDENTIALS") or state_dir / "google-service-account.json").expanduser(),

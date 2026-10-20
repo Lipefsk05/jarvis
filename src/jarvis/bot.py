@@ -38,6 +38,7 @@ from .help import format_help, menu
 from .config import Settings
 from .conversation import History
 from . import heartbeat, scheduler, worker as jobs
+from .digest import Digest
 from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
@@ -447,6 +448,19 @@ def build_application(settings: Settings) -> Application:
             return
         await cancel_reminder(message, update.effective_chat.id, int(arg), "")
 
+    digest = Digest(
+        settings.mail_accounts, worker, deliver_to_owner, clock, settings.state_dir / "resumo_email.json",
+        hour=settings.digest_hour,
+    ) if settings.mail_accounts else None
+
+    async def on_emails(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        if digest is None:
+            await message.reply_text("Nenhuma conta de e-mail está ligada, senhor.")
+            return
+        await message.reply_text("Lendo os e-mails das últimas 24 horas, senhor; aviso quando o resumo ficar pronto.")
+        await digest.run(window_hours=24)
+
     async def ask_worker(message, chat_id: int, request: str) -> None:
         try:
             job = worker.submit(request)
@@ -586,6 +600,8 @@ def build_application(settings: Settings) -> Application:
         outbox = Outbox([TelegramChannel(application.bot, owner_chat)])
         outboxes[:] = [outbox]
         application.bot_data["worker"] = asyncio.create_task(worker.run())
+        if digest is not None:
+            application.bot_data["digest"] = asyncio.create_task(digest.loop())
         application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
             reminders, outbox, clock, on_delivered=lambda text: assistant.remember(owner_chat, text),
         ))
@@ -603,7 +619,7 @@ def build_application(settings: Settings) -> Application:
         await start_scheduler(application)
 
     async def post_shutdown(application: Application) -> None:
-        for name in ("heartbeat", "scheduler", "planner", "worker"):
+        for name in ("heartbeat", "scheduler", "planner", "worker", "digest"):
             task = application.bot_data.get(name)
             if task is not None:
                 task.cancel()
@@ -620,6 +636,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("cancela", on_cancel, filters=allowed))
     app.add_handler(CommandHandler("pede", on_ask, filters=allowed))
     app.add_handler(CommandHandler("pedidos", on_jobs, filters=allowed))
+    app.add_handler(CommandHandler("emails", on_emails, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler("plano", on_plan, filters=allowed))
