@@ -77,7 +77,7 @@ Batimento por minuto e registro da lacuna; mensagens do Telegram ficam guardadas
 
 ## Estado da implementação (2026-10-12)
 
-Fase 1 (núcleo + Telegram) funcionando, 459 testes, rodando no notebook de casa vigiado pela bandeja do Windows (`tray/`). Ainda sem Trabalhador, e-mail, agenda, resposta em voz nem política de contexto completa. Módulos em `src/jarvis/`:
+Fase 1 (núcleo + Telegram) funcionando, 459 testes, rodando no notebook de casa vigiado pela bandeja do Windows (`tray/`). Trabalhador mínimo no ar desde 2026-10-19 (`worker.py`: `/pede` e `/pedidos`, `claude -p` só leitura, um job por vez, teto diário em `JARVIS_WORKER_DAILY_MAX`, entrega pela caixa de saída); ainda sem e-mail,  resposta em voz nem política de contexto completa. Módulos em `src/jarvis/`:
 
 | Módulo | O quê |
 |---|---|
