@@ -523,13 +523,8 @@ def build_application(settings: Settings) -> Application:
         except jobs.WorkerError as exc:
             await message.reply_text(str(exc))
             return
-        if scope == "web":
-            reply = (f"Passei ao Trabalhador (pedido {job.id}), senhor: ele pesquisa na internet, sem acesso aos seus arquivos, "
-                     "e leva alguns minutos; aviso quando terminar.")
-        else:
-            reply = f"Passei ao Trabalhador (pedido {job.id}), senhor. Ele só lê o Mind e leva alguns minutos; aviso quando terminar."
-        await message.reply_text(reply)
-        assistant.remember(chat_id, f"(Pedi ao Trabalhador{' na internet' if scope == 'web' else ''}: {job.request})")
+        await message.reply_text(research.pick(research.ACKS, job.id))
+        assistant.remember(chat_id, f"(Iniciei uma pesquisa{' na internet' if scope == 'web' else ' no Mind'}: {job.request})")
 
     offers = research.Offers()
 
@@ -564,14 +559,19 @@ def build_application(settings: Settings) -> Application:
             answer = await asyncio.to_thread(websearch.gemini_search, request, settings.gemini_api_key, clock().date())
         except websearch.SearchError as exc:
             log.warning("Quick web search failed (%s): handing it to the Worker", exc)
-            await message.reply_text("A busca rápida não deu certo, senhor; passo ao Trabalhador.")
-            await ask_worker(message, chat_id, request, scope="web")
+            try:
+                job = worker.submit(request, "web")
+            except jobs.WorkerError as limit:
+                await message.reply_text(str(limit))
+                return
+            await message.reply_text(research.LATER_LINE)
+            assistant.remember(chat_id, f"(Iniciei uma pesquisa na internet: {job.request})")
             return
         offers.remember_quick(chat_id, request)
         text = websearch.format_answer(answer)
         await message.reply_text(
             text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Aprofundar (Trabalhador)", callback_data=DEEPEN)]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Aprofundar", callback_data=DEEPEN)]]),
         )
         assistant.remember(chat_id, f"(Pesquisei na internet: {request}. Resposta: {answer.text})")
 

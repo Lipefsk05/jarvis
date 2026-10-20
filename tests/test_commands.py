@@ -167,7 +167,8 @@ class WorkRequestTest(unittest.TestCase):
     def test_research_verbs_start_a_work_request(self):
         from jarvis.commands import parse_work_request
         for text in ("pesquisa no Mind tudo sobre o Forge", "Investiga por que o resumo atrasou", "descobre quais tarefas do dindin estão paradas",
-                     "jarvis, levanta os gastos que anotei", "pode procurar o que decidi sobre o domínio", "por favor pesquise as decisões do Pedro"):
+                     "jarvis, levanta os gastos que anotei", "pode procurar o que decidi sobre o domínio", "por favor pesquise as decisões do Pedro",
+                     "Compara pra mim firebase e supabase na internet", "busca o preço do domínio", "olha pra mim o que decidi sobre o Domo"):
             self.assertEqual(parse_work_request(text), text.strip(), text)
 
     def test_everything_else_is_left_to_the_other_paths(self):

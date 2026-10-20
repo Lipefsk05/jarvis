@@ -73,7 +73,8 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
         job = worker.submit("algo")
         await self.drain(worker)
         self.assertEqual(self.store.get(job.id).status, w.FAILED)
-        self.assertIn("não deu certo", self.sent[0])
+        self.assertIn("Não consegui concluir a pesquisa", self.sent[0])
+        self.assertNotIn("Trabalhador", self.sent[0])
 
     async def test_rejects_empty_full_queue_and_daily_cap(self):
         worker = self.make(daily_max=4)
@@ -83,7 +84,7 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
             worker.submit(f"pedido {i}")
         with self.assertRaises(w.WorkerError) as ctx:
             worker.submit("mais um")
-        self.assertIn("fila", str(ctx.exception))
+        self.assertIn("em andamento", str(ctx.exception))
         await self.drain(worker)
         worker.submit("o quarto")
         with self.assertRaises(w.WorkerError) as ctx:

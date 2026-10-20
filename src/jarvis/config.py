@@ -96,12 +96,12 @@ def _worker_timeout(value: str | None) -> float:
 
 
 def _worker_daily_max(value: str | None) -> int:
-    """Worker jobs per day (1 to 100); unknown values fall back to 10."""
+    """Worker jobs per day (1 to 100); unknown values fall back to 30."""
     try:
         number = int((value or "").strip())
     except ValueError:
-        return 10
-    return number if 1 <= number <= 100 else 10
+        return 30
+    return number if 1 <= number <= 100 else 30
 
 
 def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
@@ -162,7 +162,7 @@ class Settings:
     weather_lon: float = -43.94
     weather_place: str = "Belo Horizonte"
     digest_hour: int = 7  # hour of the day (0-23) from which the daily e-mail digest is due
-    worker_daily_max: int = 10  # Worker jobs per day: each one spends the Pro subscription quota
+    worker_daily_max: int = 30  # Worker jobs per day: each one spends the Pro subscription quota
 
     @classmethod
     def load(

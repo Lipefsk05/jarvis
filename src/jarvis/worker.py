@@ -215,7 +215,7 @@ class Worker:
         clock: Callable[[], datetime],
         *,
         timeout_s: float = 300.0,
-        daily_max: int = 10,
+        daily_max: int = 30,
         web_cwd: Path | None = None,
         runner: Runner | None = None,
     ) -> None:
@@ -235,11 +235,11 @@ class Worker:
         """Queue a request or raise WorkerError saying why not. A "web" job searches the internet and reads no files."""
         request = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]+", " ", request).strip()[:MAX_REQUEST_CHARS]
         if not request:
-            raise WorkerError("O que devo pedir ao Trabalhador, senhor? Use /pede <pedido>.")
+            raise WorkerError("O que devo pesquisar, senhor? Use /pede <pedido>.")
         if len(self._store.open_jobs()) >= MAX_QUEUE:
-            raise WorkerError("O Trabalhador já tem pedidos demais na fila, senhor. Espero um terminar.")
+            raise WorkerError("Já estou com pesquisas demais em andamento, senhor. Espero uma terminar.")
         if self._store.started_on(self._clock().date()) >= self._daily_max:
-            raise WorkerError(f"Já fiz {self._daily_max} pedidos ao Trabalhador hoje, senhor; cada um gasta a cota da assinatura. Amanhã há mais.")
+            raise WorkerError(f"Já fiz {self._daily_max} pesquisas pesadas hoje, senhor; cada uma gasta a cota da assinatura. Amanhã há mais.")
         job = self._store.add(request, self._clock(), scope=scope)
         self._queue.put_nowait(job.id)
         return job
@@ -303,10 +303,11 @@ class Worker:
 def format_delivery(job: Job) -> str:
     if job.kind == "resumo":
         return f"{job.request}, senhor:\n\n{job.result}" if job.status == DONE else f"Não consegui montar o resumo ({job.request}): {job.result}."
+    from .research import DONE_LINES, FAILED_LINE, pick
+
     if job.status == DONE:
-        where = ", na internet," if job.scope == "web" else ""
-        return f"Trabalhador, pedido {job.id}{where} pronto, senhor:\n\n{job.result}"
-    return f"O pedido {job.id} ao Trabalhador não deu certo, senhor: {job.result}."
+        return f"{pick(DONE_LINES, job.id)}\n\n{job.result}"
+    return f"{FAILED_LINE}: {job.result}."
 
 
 def listing(jobs: list[Job]) -> str:

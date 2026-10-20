@@ -92,3 +92,24 @@ class Offers:
 
     def last_quick(self, chat_id: int) -> str | None:
         return self._last_quick.get(chat_id)
+
+
+# What the Jarvis says while a search runs and when it ends: the tools behind it (API, Worker) are never named.
+ACKS = (
+    "Deixe comigo, senhor; já estou procurando.",
+    "Estou nisso, senhor. Volto assim que encontrar.",
+    "Já estou investigando, senhor. Aviso quando tiver algo.",
+    "Um momento, senhor; vou verificar isso.",
+)
+DONE_LINES = (
+    "Terminei a pesquisa, senhor:",
+    "Aqui está o que encontrei, senhor:",
+    "Pronto, senhor. Isto é o que apurei:",
+)
+FAILED_LINE = "Não consegui concluir a pesquisa, senhor"
+LATER_LINE = "Isso pede uma apuração mais cuidadosa, senhor; aviso assim que tiver algo."
+
+
+def pick(pool: tuple[str, ...], n: int) -> str:
+    """A line from the pool, rotating with `n` (a job id) so two in a row never repeat."""
+    return pool[n % len(pool)]

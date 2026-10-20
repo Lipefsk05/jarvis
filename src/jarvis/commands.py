@@ -80,8 +80,8 @@ _EVENT_CREATE_INTENT = re.compile(r"\b(?:marc\w*|agend\w*|cri\w*|coloc\w*|bot\w*
 _EVENT_MOVE_INTENT = re.compile(r"\b(?:mov\w*|remarc\w*|adi[ae]\w*|troc\w*|pass(?:a|e|ar)\b|mud\w*|transfer\w*|antecip\w*|atras\w*|jog\w*)")
 
 
-# Asking for research. The verbs the owner chose: pesquisa, investiga, procura, descobre, levanta (any form).
-_WORK_VERB = r"(?:pesquis\w*|investig\w*|procur\w*|descobr\w*|descubr\w*|levant\w*)"
+# Asking for research. The verbs the owner chose: pesquisa, investiga, procura, descobre, levanta, compara, busca, olha pra mim (any form).
+_WORK_VERB = r"(?:pesquis\w*|investig\w*|procur\w*|descobr\w*|descubr\w*|levant\w*|compar\w*|busc\w*|olh\w*\s+(?:pra|para)\s+mim)"
 _WORK_INTENT = re.compile(rf"\b{_WORK_VERB}")
 _WORK_REQUEST = re.compile(
     rf"^\s*(?:jarvis[\s,:]+)?(?:(?:por favor|pf|pfv|pode|poderia|consegue|voce pode|vc pode|quero que voce|preciso que voce|me)\s+)*"
