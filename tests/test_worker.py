@@ -98,6 +98,22 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(again.add("dois", NOW).id, first.id + 1)
 
 
+class FindClaudeTest(unittest.TestCase):
+    def test_env_override_wins(self):
+        self.assertEqual(w.find_claude({"JARVIS_CLAUDE_BIN": "/x/claude", "PATH": ""}), "/x/claude")
+
+    def test_falls_back_to_local_bin_when_the_path_is_short(self):
+        with tempfile.TemporaryDirectory() as home:
+            binary = Path(home) / ".local" / "bin" / "claude"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n")
+            self.assertEqual(w.find_claude({"PATH": "/nonexistent"}, home=Path(home)), str(binary))
+
+    def test_last_resort_is_the_bare_name(self):
+        with tempfile.TemporaryDirectory() as home:
+            self.assertIn(w.find_claude({"PATH": "/nonexistent"}, home=Path(home)), ("claude", "/usr/local/bin/claude"))
+
+
 class RunClaudeTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_binary_is_a_failure_not_a_crash(self):
         outcome = await w.run_claude("oi", Path("."), 5, binary="/nonexistent/claude")

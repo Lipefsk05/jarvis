@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -134,9 +135,25 @@ class Outcome:
 Runner = Callable[..., Awaitable[Outcome]]  # (request, cwd, timeout) and, for digests, tools=""
 
 
-async def run_claude(request: str, cwd: Path, timeout_s: float, binary: str = "claude", tools: str = "Read,Grep,Glob") -> Outcome:
+def find_claude(environ: dict | None = None, home: Path | None = None) -> str:
+    """Where the `claude` binary is. The bot started from the Windows tray has a short PATH without
+    ~/.local/bin, so look there too; JARVIS_CLAUDE_BIN overrides everything."""
+    environ = os.environ if environ is None else environ
+    if environ.get("JARVIS_CLAUDE_BIN"):
+        return environ["JARVIS_CLAUDE_BIN"]
+    found = shutil.which("claude", path=environ.get("PATH"))
+    if found:
+        return found
+    for candidate in ((home or Path.home()) / ".local" / "bin" / "claude", Path("/usr/local/bin/claude")):
+        if candidate.is_file():
+            return str(candidate)
+    return "claude"
+
+
+async def run_claude(request: str, cwd: Path, timeout_s: float, binary: str | None = None, tools: str = "Read,Grep,Glob") -> Outcome:
     """One `claude -p` call: read-only tools (none when `tools` is empty), no user/project settings (small context),
     no session saved. The request goes through stdin, never through the command line."""
+    binary = binary or find_claude()
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # the subscription pays, never a stray key
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -146,7 +163,7 @@ async def run_claude(request: str, cwd: Path, timeout_s: float, binary: str = "c
             stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
-        return Outcome(False, f"não consegui iniciar o Claude Code ({type(exc).__name__})", FAILED)
+        return Outcome(False, f"não consegui iniciar o Claude Code ({type(exc).__name__}: {Path(binary).name} não encontrado ou cwd inválido)", FAILED)
     try:
         out, err = await asyncio.wait_for(proc.communicate(request.encode("utf-8")), timeout_s)
     except asyncio.TimeoutError:
