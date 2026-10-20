@@ -37,7 +37,7 @@ from .commands import asks_capabilities, parse_note_request, parse_reminder_requ
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
-from . import heartbeat, scheduler
+from . import heartbeat, scheduler, worker as jobs
 from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
@@ -98,6 +98,21 @@ def build_application(settings: Settings) -> Application:
     plans = PlanStore(settings.state_dir / "plano.json")
     notes = NoteJournal(settings.state_dir / "notas_recentes.json")
     owner_chat = min(settings.allowed_ids)  # proactive messages go to the owner's private chat
+    outboxes: list[Outbox] = []  # filled when the bot starts; the Worker delivers through it
+
+    async def deliver_to_owner(text: str) -> bool:
+        if not outboxes:
+            return False
+        delivered = await outboxes[0].deliver(text)
+        if delivered:
+            assistant.remember(owner_chat, text)
+        return delivered
+
+    job_store = jobs.JobStore(settings.state_dir / "trabalhos.json")
+    worker = jobs.Worker(
+        job_store, settings.mind_dir, deliver_to_owner, clock,
+        timeout_s=settings.worker_timeout_s, daily_max=settings.worker_daily_max,
+    )
     accounts = parse_accounts(settings.calendars)
     agenda = agenda_calendar = None
     if accounts and settings.google_credentials.is_file():
@@ -432,6 +447,23 @@ def build_application(settings: Settings) -> Application:
             return
         await cancel_reminder(message, update.effective_chat.id, int(arg), "")
 
+    async def ask_worker(message, chat_id: int, request: str) -> None:
+        try:
+            job = worker.submit(request)
+        except jobs.WorkerError as exc:
+            await message.reply_text(str(exc))
+            return
+        reply = f"Passei ao Trabalhador (pedido {job.id}), senhor. Ele só lê o Mind e leva alguns minutos; aviso quando terminar."
+        await message.reply_text(reply)
+        assistant.remember(chat_id, f"(Pedi ao Trabalhador: {job.request})")
+
+    async def on_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        await ask_worker(message, update.effective_chat.id, message.text.partition(" ")[2].strip())
+
+    async def on_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text(jobs.listing(job_store.recent()))
+
     async def on_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await undo_note(update.effective_message, update.effective_chat.id)
 
@@ -552,6 +584,8 @@ def build_application(settings: Settings) -> Application:
 
     async def start_scheduler(application: Application) -> None:
         outbox = Outbox([TelegramChannel(application.bot, owner_chat)])
+        outboxes[:] = [outbox]
+        application.bot_data["worker"] = asyncio.create_task(worker.run())
         application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
             reminders, outbox, clock, on_delivered=lambda text: assistant.remember(owner_chat, text),
         ))
@@ -569,7 +603,7 @@ def build_application(settings: Settings) -> Application:
         await start_scheduler(application)
 
     async def post_shutdown(application: Application) -> None:
-        for name in ("heartbeat", "scheduler", "planner"):
+        for name in ("heartbeat", "scheduler", "planner", "worker"):
             task = application.bot_data.get(name)
             if task is not None:
                 task.cancel()
@@ -584,6 +618,8 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("lembra", on_remind, filters=allowed))
     app.add_handler(CommandHandler("lembretes", on_reminders, filters=allowed))
     app.add_handler(CommandHandler("cancela", on_cancel, filters=allowed))
+    app.add_handler(CommandHandler("pede", on_ask, filters=allowed))
+    app.add_handler(CommandHandler("pedidos", on_jobs, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler("plano", on_plan, filters=allowed))

@@ -66,6 +66,24 @@ def _timeout(value: str | None) -> float:
     return number if number is not None and 1 <= number <= 60 else 15.0
 
 
+def _worker_timeout(value: str | None) -> float:
+    """Seconds one Worker job may run; unknown or silly values fall back to 300."""
+    try:
+        number = _opt_float(value)
+    except ValueError:
+        number = None
+    return number if number is not None and 30 <= number <= 1800 else 300.0
+
+
+def _worker_daily_max(value: str | None) -> int:
+    """Worker jobs per day (1 to 100); unknown values fall back to 10."""
+    try:
+        number = int((value or "").strip())
+    except ValueError:
+        return 10
+    return number if 1 <= number <= 100 else 10
+
+
 def _parse_models(value: str | None, provider: str) -> tuple[str, ...]:
     if value is None or not value.strip():
         return DEFAULT_FALLBACKS.get(provider, ())
@@ -118,6 +136,8 @@ class Settings:
     calendars: str = ""  # 'trabalho=a@x.com,pessoal=b@y.com,cafe=c@z.com'; empty = no agenda
     google_credentials: Path = Path("state/google-service-account.json")
     tasks_calendar: str = ""  # id of the separate calendar where the day's tasks are mirrored; empty = off
+    worker_timeout_s: float = 300.0  # how long one Worker job (claude -p) may run
+    worker_daily_max: int = 10  # Worker jobs per day: each one spends the Pro subscription quota
 
     @classmethod
     def load(
@@ -159,6 +179,8 @@ class Settings:
             talker_timeout_s=_timeout(values.get("JARVIS_TALKER_TIMEOUT_S")),
             calendars=(values.get("JARVIS_CALENDARS") or "").strip(),
             tasks_calendar=(values.get("JARVIS_TASKS_CALENDAR") or "").strip(),
+            worker_timeout_s=_worker_timeout(values.get("JARVIS_WORKER_TIMEOUT_S")),
+            worker_daily_max=_worker_daily_max(values.get("JARVIS_WORKER_DAILY_MAX")),
             google_credentials=Path(values.get("JARVIS_GOOGLE_CREDENTIALS") or state_dir / "google-service-account.json").expanduser(),
         )
 
