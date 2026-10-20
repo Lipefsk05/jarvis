@@ -79,31 +79,44 @@ class Digest:
         now, last = self._clock(), self._last_run()
         return now.hour >= self._hour and (last is None or last.date() < now.date())
 
-    async def run(self, window_hours: int | None = None) -> int:
-        """Read every account and queue one summary each. Returns how many were queued; the run is marked
-        done only if every account could be read, so a failed read is tried again at the next check."""
+    def cutoff(self, window_hours: int | None = None) -> datetime:
         now = self._clock()
-        last = self._last_run()
-        cutoff = now - timedelta(hours=window_hours) if window_hours else (last or now - timedelta(hours=24))
-        queued, complete = 0, True
+        return now - timedelta(hours=window_hours) if window_hours else (self._last_run() or now - timedelta(hours=24))
+
+    def mark(self) -> None:
+        self._mark(self._clock())
+
+    async def gather(self, cutoff: datetime) -> tuple[list[tuple[str, str]], list[str], bool]:
+        """Read every account: (label, prompt) of each one with new mail, plain notes (nothing new, or a read that
+        failed) and whether every account could be read."""
+        prepared, notes, complete = [], [], True
         for account in self._accounts:
+            label = LABELS.get(account.name, account.name)
             try:
                 mails = await asyncio.to_thread(self._fetch, account, cutoff.date())
             except Exception as exc:  # a bad login or a network drop must not break the bot
                 log.warning("Could not read the %s mailbox: %s", account.name, type(exc).__name__)
-                await self._deliver(f"Não consegui ler o e-mail {LABELS.get(account.name, account.name)}, senhor ({type(exc).__name__}).")
+                notes.append(f"Não consegui ler o e-mail {label}, senhor ({type(exc).__name__}).")
                 complete = False
                 continue
             mails = fresh(mails, cutoff)
-            label = LABELS.get(account.name, account.name)
             if not mails:
-                await self._deliver(f"Sem e-mails novos em {label}, senhor.")
+                notes.append(f"Sem e-mails novos em {label}, senhor.")
                 continue
-            self._worker.submit_digest(f"Resumo dos e-mails — {label}", build_prompt(account, mails, now.tzinfo))
-            queued += 1
+            prepared.append((f"Resumo dos e-mails — {label}", build_prompt(account, mails, self._clock().tzinfo)))
+        return prepared, notes, complete
+
+    async def run(self, window_hours: int | None = None) -> int:
+        """Read every account and queue one summary each. Returns how many were queued; the run is marked
+        done only if every account could be read, so a failed read is tried again at the next check."""
+        prepared, notes, complete = await self.gather(self.cutoff(window_hours))
+        for note in notes:
+            await self._deliver(note)
+        for label, prompt in prepared:
+            self._worker.submit_digest(label, prompt)
         if complete and window_hours is None:
-            self._mark(now)
-        return queued
+            self.mark()
+        return len(prepared)
 
     async def loop(self) -> None:
         while True:

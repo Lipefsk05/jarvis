@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -39,6 +39,9 @@ from .config import Settings
 from .conversation import History
 from . import heartbeat, scheduler, worker as jobs
 from .digest import Digest
+from .morning import Morning
+from . import weather
+from .agenda import line as event_line
 from .humor import HumorGate
 from .inbox import NoteJournal, write_note
 from .mind import load_pending, resolve_query, select
@@ -453,6 +456,41 @@ def build_application(settings: Settings) -> Application:
         hour=settings.digest_hour,
     ) if settings.mail_accounts else None
 
+    async def morning_weather() -> str | None:
+        forecast = await asyncio.to_thread(weather.fetch, settings.weather_lat, settings.weather_lon, settings.timezone)
+        return weather.format_forecast(forecast, settings.weather_place)
+
+    async def morning_agenda() -> str | None:
+        if agenda is None:
+            return None
+        start = clock().replace(hour=0, minute=0, second=0, microsecond=0)
+        reading = await asyncio.to_thread(agenda.read, start, start + timedelta(days=1))
+        lines = [event_line(item) for item in reading.items] or ["Nada marcado hoje."]
+        if reading.failed:
+            lines.append("(não consegui ler a agenda: " + ", ".join(a.label for a in reading.failed) + ")")
+        return "Agenda de hoje\n" + "\n".join(lines)
+
+    async def morning_reminders() -> str | None:
+        today = clock().date()
+        due = [r for r in reminders.pending() if r.due.date() == today]
+        return "Lembretes de hoje\n" + "\n".join(f"{r.due:%H:%M} — {r.text}" for r in due) if due else None
+
+    async def morning_plan() -> str | None:
+        today = clock().date()
+        await refresh_plan()
+        plan = plans.get(today)
+        return format_plan(plan, plans, today) if plan is not None and plan.items else None
+
+    morning = Morning(
+        [("Clima", morning_weather), ("Agenda", morning_agenda), ("Lembretes", morning_reminders), ("Plano", morning_plan)],
+        digest, worker, deliver_to_owner, clock, settings.state_dir / "resumao.json", hour=settings.digest_hour,
+    )
+
+    async def on_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.effective_message.reply_text("Juntando clima, agenda, lembretes, plano e e-mails, senhor; leva um minuto.")
+        if not await morning.run():
+            await update.effective_message.reply_text("Não consegui entregar o resumo, senhor.")
+
     async def on_emails(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if digest is None:
@@ -600,8 +638,7 @@ def build_application(settings: Settings) -> Application:
         outbox = Outbox([TelegramChannel(application.bot, owner_chat)])
         outboxes[:] = [outbox]
         application.bot_data["worker"] = asyncio.create_task(worker.run())
-        if digest is not None:
-            application.bot_data["digest"] = asyncio.create_task(digest.loop())
+        application.bot_data["morning"] = asyncio.create_task(morning.loop())
         application.bot_data["scheduler"] = asyncio.create_task(scheduler.run(
             reminders, outbox, clock, on_delivered=lambda text: assistant.remember(owner_chat, text),
         ))
@@ -619,7 +656,7 @@ def build_application(settings: Settings) -> Application:
         await start_scheduler(application)
 
     async def post_shutdown(application: Application) -> None:
-        for name in ("heartbeat", "scheduler", "planner", "worker", "digest"):
+        for name in ("heartbeat", "scheduler", "planner", "worker", "morning"):
             task = application.bot_data.get(name)
             if task is not None:
                 task.cancel()
@@ -637,6 +674,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("pede", on_ask, filters=allowed))
     app.add_handler(CommandHandler("pedidos", on_jobs, filters=allowed))
     app.add_handler(CommandHandler("emails", on_emails, filters=allowed))
+    app.add_handler(CommandHandler("resumo", on_summary, filters=allowed))
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler("plano", on_plan, filters=allowed))

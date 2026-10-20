@@ -68,6 +68,15 @@ def _timeout(value: str | None) -> float:
     return number if number is not None and 1 <= number <= 60 else 15.0
 
 
+def _coord(value: str | None, default: float, limit: float) -> float:
+    """A latitude or longitude within +-limit; unknown values fall back to the default."""
+    try:
+        number = _opt_float(value)
+    except ValueError:
+        return default
+    return number if number is not None and -limit <= number <= limit else default
+
+
 def _hour(value: str | None) -> int:
     """Hour (0-23) for the daily digest; unknown values fall back to 7."""
     try:
@@ -149,6 +158,9 @@ class Settings:
     tasks_calendar: str = ""  # id of the separate calendar where the day's tasks are mirrored; empty = off
     worker_timeout_s: float = 300.0  # how long one Worker job (claude -p) may run
     mail_accounts: tuple[MailAccount, ...] = ()  # read-only IMAP accounts from JARVIS_IMAP_<NAME>_USER/_PASSWORD
+    weather_lat: float = -19.92  # Belo Horizonte, where the owner lives
+    weather_lon: float = -43.94
+    weather_place: str = "Belo Horizonte"
     digest_hour: int = 7  # hour of the day (0-23) from which the daily e-mail digest is due
     worker_daily_max: int = 10  # Worker jobs per day: each one spends the Pro subscription quota
 
@@ -193,6 +205,9 @@ class Settings:
             calendars=(values.get("JARVIS_CALENDARS") or "").strip(),
             tasks_calendar=(values.get("JARVIS_TASKS_CALENDAR") or "").strip(),
             mail_accounts=parse_mail_accounts(values),
+            weather_lat=_coord(values.get("JARVIS_WEATHER_LAT"), -19.92, 90),
+            weather_lon=_coord(values.get("JARVIS_WEATHER_LON"), -43.94, 180),
+            weather_place=(values.get("JARVIS_WEATHER_PLACE") or "Belo Horizonte").strip(),
             digest_hour=_hour(values.get("JARVIS_DIGEST_HOUR")),
             worker_timeout_s=_worker_timeout(values.get("JARVIS_WORKER_TIMEOUT_S")),
             worker_daily_max=_worker_daily_max(values.get("JARVIS_WORKER_DAILY_MAX")),

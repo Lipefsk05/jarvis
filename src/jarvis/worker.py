@@ -215,6 +215,7 @@ class Worker:
         self._runner = runner or run_claude
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._digests: dict[int, str] = {}  # job id -> prompt kept in memory only: it holds the text of the mails
+        self._silent: set[int] = set()  # jobs whose answer goes into the morning summary, not into a message of its own
 
     def submit(self, request: str) -> Job:
         """Queue a request or raise WorkerError saying why not."""
@@ -229,12 +230,23 @@ class Worker:
         self._queue.put_nowait(job.id)
         return job
 
-    def submit_digest(self, label: str, prompt: str) -> Job:
-        """Queue a digest (no tools, outside the daily cap). The prompt is never written to disk."""
+    def submit_digest(self, label: str, prompt: str, silent: bool = False) -> Job:
+        """Queue a digest (no tools, outside the daily cap). The prompt is never written to disk.
+        A silent job is not delivered by itself: the caller collects it with `wait`."""
         job = self._store.add(label, self._clock(), kind="resumo")
         self._digests[job.id] = prompt
+        if silent:
+            self._silent.add(job.id)
         self._queue.put_nowait(job.id)
         return job
+
+    async def wait(self, job_ids: list[int], timeout_s: float) -> list[Job]:
+        """The listed jobs once none of them is open (or when the time is up); a job that never finished comes back as is."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_s
+        while loop.time() < end and any((j := self._store.get(i)) is not None and j.status in OPEN for i in job_ids):
+            await asyncio.sleep(1)
+        return [j for i in job_ids if (j := self._store.get(i)) is not None]
 
     async def run(self) -> None:
         """The loop: one job at a time, for as long as the bot lives."""
@@ -265,6 +277,9 @@ class Worker:
         job.finished = self._clock()
         job.seconds = (job.finished - started).total_seconds()
         self._store.update(job)
+        if job.id in self._silent:
+            self._silent.discard(job.id)
+            return
         await self._deliver(format_delivery(job))
 
 
