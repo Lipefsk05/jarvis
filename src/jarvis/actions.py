@@ -110,6 +110,15 @@ TOOLS = [
         {"busca": {"type": "string", "description": "Palavras do título do compromisso."}},
         ["busca"],
     ),
+    _tool(
+        "delegar_trabalho",
+        "Passa ao Trabalhador (Claude Code, só leitura, em segundo plano) uma pesquisa que exige ler arquivos do Mind do "
+        "senhor. Chame SOMENTE quando ele pedir com um verbo de investigação (pesquisa, investiga, procura, descobre, "
+        "levanta) algo que precisa de busca nas notas, tarefas ou projetos. Pergunta rápida que você responde com o que "
+        "já sabe, conversa e pedido de tarefas, agenda ou lembretes não são isso.",
+        {"pedido": {"type": "string", "description": "O que pesquisar, nas palavras do senhor, completo o bastante para quem não viu a conversa."}},
+        ["pedido"],
+    ),
     _tool("ver_gasto", "Mostra as chamadas, os tokens e o custo de hoje, com o teto diário. Chame quando o senhor perguntar quanto gastou ou usou."),
     _tool("mostrar_ajuda", "Mostra a lista do que o assistente sabe fazer. Chame quando o senhor perguntar o que você faz, como usar você, quais são seus comandos ou funções, ou pedir ajuda com o próprio assistente."),
     _tool("limpar_conversa", "Apaga o histórico da conversa atual. Chame quando o senhor pedir para esquecer ou recomeçar a conversa."),
@@ -185,6 +194,9 @@ def parse_action(call: ToolCall | None) -> Action | None:
     if call.name == "mover_evento":
         busca, quando = _clean(call.arguments.get("busca"), MAX_AREA_CHARS), _clean(call.arguments.get("quando"), MAX_WHEN_CHARS)
         return Action("mover_evento", busca=busca, quando=quando) if busca and quando else None
+    if call.name == "delegar_trabalho":
+        pedido = _clean(call.arguments.get("pedido"), MAX_NOTE_CHARS)
+        return Action("delegar_trabalho", texto=pedido) if pedido else None
     if call.name == "cancelar_evento":
         busca = _clean(call.arguments.get("busca"), MAX_AREA_CHARS)
         return Action("cancelar_evento", busca=busca) if busca else None

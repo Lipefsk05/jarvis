@@ -80,13 +80,34 @@ _EVENT_CREATE_INTENT = re.compile(r"\b(?:marc\w*|agend\w*|cri\w*|coloc\w*|bot\w*
 _EVENT_MOVE_INTENT = re.compile(r"\b(?:mov\w*|remarc\w*|adi[ae]\w*|troc\w*|pass(?:a|e|ar)\b|mud\w*|transfer\w*|antecip\w*|atras\w*|jog\w*)")
 
 
+# Asking for research. The verbs the owner chose: pesquisa, investiga, procura, descobre, levanta (any form).
+_WORK_VERB = r"(?:pesquis\w*|investig\w*|procur\w*|descobr\w*|descubr\w*|levant\w*)"
+_WORK_INTENT = re.compile(rf"\b{_WORK_VERB}")
+_WORK_REQUEST = re.compile(
+    rf"^\s*(?:jarvis[\s,:]+)?(?:(?:por favor|pf|pfv|pode|poderia|consegue|voce pode|vc pode|quero que voce|preciso que voce|me)\s+)*"
+    rf"{_WORK_VERB}\b\s+(.{{6,}})$",
+    re.DOTALL,
+)
+# The calendar and the tasks have their own paths: "procura o dentista na agenda" is not a job for the Worker.
+_NOT_WORK = re.compile(r"\b(?:agenda|compromissos?|eventos?|reunia[oa]\w*|lembretes?)\b")
+
+
+def parse_work_request(text: str) -> str | None:
+    """The request for the Worker if the message starts with a research verb ("pesquisa no Mind tudo sobre X"),
+    else None. A bare verb, or a calendar or reminder matter, is left to the other paths."""
+    folded = fold(text)
+    if not _WORK_REQUEST.match(folded) or _NOT_WORK.search(folded):
+        return None
+    return text.strip()
+
+
 def has_intent(action: str, text: str) -> bool:
     """Did the user's own words ask for this action? Only the actions that change things or may confuse are checked."""
     folded = fold(text)
     pattern = {"cancelar_lembrete": _CANCEL_INTENT, "listar_lembretes": _LIST_INTENT,
                "limpar_conversa": _CLEAR_INTENT, "anotar": _NOTE_INTENT, "concluir_tarefa": _DONE_INTENT,
                "criar_evento": _EVENT_CREATE_INTENT, "mover_evento": _EVENT_MOVE_INTENT,
-               "cancelar_evento": _CANCEL_INTENT}.get(action)
+               "cancelar_evento": _CANCEL_INTENT, "delegar_trabalho": _WORK_INTENT}.get(action)
     if pattern is None:
         return True
     return bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))

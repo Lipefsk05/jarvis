@@ -33,7 +33,7 @@ from .task_calendar import TaskCalendar, safe_sync
 from .assistant import Assistant
 from .audio import GroqTranscriber, TranscribeError, check_audio, transcript_line
 from .budget import Budget
-from .commands import asks_capabilities, parse_note_request, parse_reminder_request, parse_event_request, task_query_words, wants_agenda, wants_tasks
+from .commands import asks_capabilities, parse_note_request, parse_work_request, parse_reminder_request, parse_event_request, task_query_words, wants_agenda, wants_tasks
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
@@ -189,6 +189,8 @@ def build_application(settings: Settings) -> Application:
                 await message.reply_text("A agenda do Google ainda não está ligada, senhor.")
             else:
                 await agenda_bot.run(message, chat_id, action, user_text)
+        elif action.name == "delegar_trabalho":
+            await ask_worker(message, chat_id, action.texto)
         elif action.name == "concluir_tarefa":
             await finish_task(message, chat_id, action)
         elif action.name == "adiantar_tarefa":
@@ -321,6 +323,10 @@ def build_application(settings: Settings) -> Application:
             return
         if agenda_bot is not None and wants_agenda(text):  # "o que tenho amanhã?": the calendar, decided by code
             await agenda_bot.run(message, chat_id, Action("consultar_agenda", quando=text), text)
+            return
+        work = parse_work_request(text)
+        if work is not None:  # "pesquisa no Mind tudo sobre X": the verb is the request, so no model decides it
+            await ask_worker(message, chat_id, work)
             return
         if wants_tasks(text):  # same readable answer as /tarefas, no model call
             await reply_tasks(message, task_query_words(text))

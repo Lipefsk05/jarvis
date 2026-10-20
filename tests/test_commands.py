@@ -161,3 +161,22 @@ class EventRequestTest(unittest.TestCase):
         self.assertFalse(wants_agenda("tenho uma reunião amanhã"))
         self.assertFalse(wants_agenda("o que tenho amanhã às 15?"))
         self.assertTrue(wants_agenda("o que tenho amanhã"))
+
+
+class WorkRequestTest(unittest.TestCase):
+    def test_research_verbs_start_a_work_request(self):
+        from jarvis.commands import parse_work_request
+        for text in ("pesquisa no Mind tudo sobre o Forge", "Investiga por que o resumo atrasou", "descobre quais tarefas do dindin estão paradas",
+                     "jarvis, levanta os gastos que anotei", "pode procurar o que decidi sobre o domínio", "por favor pesquise as decisões do Pedro"):
+            self.assertEqual(parse_work_request(text), text.strip(), text)
+
+    def test_everything_else_is_left_to_the_other_paths(self):
+        from jarvis.commands import parse_work_request
+        for text in ("pesquisa", "procura o dentista na agenda", "descobre quando é a reunião com o Gustavo",
+                     "a pesquisa de mercado ficou boa", "me lembra de pesquisar o domínio amanhã", "oi", "quais tarefas tenho?"):
+            self.assertIsNone(parse_work_request(text), text)
+
+    def test_the_model_tool_needs_the_verb(self):
+        from jarvis.commands import has_intent
+        self.assertTrue(has_intent("delegar_trabalho", "levanta as notas do Pedro"))
+        self.assertFalse(has_intent("delegar_trabalho", "o que você acha do Pedro?"))
