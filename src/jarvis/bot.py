@@ -39,6 +39,7 @@ from .config import Settings
 from .conversation import History
 from . import heartbeat, scheduler, worker as jobs
 from .digest import Digest
+from . import research, websearch
 from .morning import Morning
 from . import weather
 from .agenda import line as event_line
@@ -82,6 +83,10 @@ def feedback_markup() -> InlineKeyboardMarkup:
     )
 
 
+SCOPE_PREFIX = "pesq"  # callback data: pesq:mind | pesq:web
+DEEPEN = "pesq_fundo"
+
+
 def build_application(settings: Settings) -> Application:
     tz = ZoneInfo(settings.timezone)
 
@@ -115,7 +120,7 @@ def build_application(settings: Settings) -> Application:
     job_store = jobs.JobStore(settings.state_dir / "trabalhos.json")
     worker = jobs.Worker(
         job_store, settings.mind_dir, deliver_to_owner, clock,
-        timeout_s=settings.worker_timeout_s, daily_max=settings.worker_daily_max,
+        timeout_s=settings.worker_timeout_s, daily_max=settings.worker_daily_max, web_cwd=settings.state_dir / "web",
     )
     accounts = parse_accounts(settings.calendars)
     agenda = agenda_calendar = None
@@ -190,7 +195,7 @@ def build_application(settings: Settings) -> Application:
             else:
                 await agenda_bot.run(message, chat_id, action, user_text)
         elif action.name == "delegar_trabalho":
-            await ask_worker(message, chat_id, action.texto)
+            await start_research(message, chat_id, action.texto, user_text)
         elif action.name == "concluir_tarefa":
             await finish_task(message, chat_id, action)
         elif action.name == "adiantar_tarefa":
@@ -296,6 +301,13 @@ def build_application(settings: Settings) -> Application:
         if confirmed is not None:  # "sim" to a reminder the code proposed: no model, exact data
             await run_action(message, chat_id, confirmed)
             return
+        waiting = offers.pending(chat_id, clock())
+        if waiting is not None:  # "No Mind ou na internet?" is waiting for this message
+            offers.clear(chat_id)
+            scope = research.parse_scope_answer(text)
+            if scope is not None:
+                await run_research(message, chat_id, waiting, scope)
+                return
         if agenda_bot is not None and await agenda_bot.answer(message, chat_id, text):  # a question about an event
             return
         answered = flow.answer(chat_id, text, clock())  # a question about a reminder is waiting for this message
@@ -325,8 +337,8 @@ def build_application(settings: Settings) -> Application:
             await agenda_bot.run(message, chat_id, Action("consultar_agenda", quando=text), text)
             return
         work = parse_work_request(text)
-        if work is not None:  # "pesquisa no Mind tudo sobre X": the verb is the request, so no model decides it
-            await ask_worker(message, chat_id, work)
+        if work is not None:  # "pesquisa ... X": the verb is the request (no model), and the owner picks where to look
+            await start_research(message, chat_id, work)
             return
         if wants_tasks(text):  # same readable answer as /tarefas, no model call
             await reply_tasks(message, task_query_words(text))
@@ -505,15 +517,83 @@ def build_application(settings: Settings) -> Application:
         await message.reply_text("Lendo os e-mails das últimas 24 horas, senhor; aviso quando o resumo ficar pronto.")
         await digest.run(window_hours=24)
 
-    async def ask_worker(message, chat_id: int, request: str) -> None:
+    async def ask_worker(message, chat_id: int, request: str, scope: str = "mind") -> None:
         try:
-            job = worker.submit(request)
+            job = worker.submit(request, scope)
         except jobs.WorkerError as exc:
             await message.reply_text(str(exc))
             return
-        reply = f"Passei ao Trabalhador (pedido {job.id}), senhor. Ele só lê o Mind e leva alguns minutos; aviso quando terminar."
+        if scope == "web":
+            reply = (f"Passei ao Trabalhador (pedido {job.id}), senhor: ele pesquisa na internet, sem acesso aos seus arquivos, "
+                     "e leva alguns minutos; aviso quando terminar.")
+        else:
+            reply = f"Passei ao Trabalhador (pedido {job.id}), senhor. Ele só lê o Mind e leva alguns minutos; aviso quando terminar."
         await message.reply_text(reply)
-        assistant.remember(chat_id, f"(Pedi ao Trabalhador: {job.request})")
+        assistant.remember(chat_id, f"(Pedi ao Trabalhador{' na internet' if scope == 'web' else ''}: {job.request})")
+
+    offers = research.Offers()
+
+    def scope_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("No Mind", callback_data=f"{SCOPE_PREFIX}:{research.MIND}"),
+            InlineKeyboardButton("Na internet", callback_data=f"{SCOPE_PREFIX}:{research.WEB}"),
+        ]])
+
+    async def start_research(message, chat_id: int, request: str, user_text: str = "") -> None:
+        """A research verb arrived: where to look is always the owner's choice, unless he said it in the request."""
+        scope = research.scope_in_text(user_text or request)
+        if scope is None:
+            offers.offer(chat_id, request, clock())
+            await message.reply_text(research.QUESTION, reply_markup=scope_keyboard())
+            assistant.remember(chat_id, f"(Perguntei se a pesquisa é no Mind ou na internet: {request})")
+            return
+        await run_research(message, chat_id, request, scope)
+
+    async def run_research(message, chat_id: int, request: str, scope: str) -> None:
+        if scope == research.MIND:
+            await ask_worker(message, chat_id, request)
+        elif research.is_deep(request):
+            await ask_worker(message, chat_id, request, scope="web")
+        else:
+            await quick_search(message, chat_id, request)
+
+    async def quick_search(message, chat_id: int, request: str) -> None:
+        """A simple internet question: Gemini with Google Search, answered right away. If it fails, the Worker does it."""
+        await message.reply_text("Pesquisando na internet, senhor.")
+        try:
+            answer = await asyncio.to_thread(websearch.gemini_search, request, settings.gemini_api_key, clock().date())
+        except websearch.SearchError as exc:
+            log.warning("Quick web search failed (%s): handing it to the Worker", exc)
+            await message.reply_text("A busca rápida não deu certo, senhor; passo ao Trabalhador.")
+            await ask_worker(message, chat_id, request, scope="web")
+            return
+        offers.remember_quick(chat_id, request)
+        text = websearch.format_answer(answer)
+        await message.reply_text(
+            text, parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Aprofundar (Trabalhador)", callback_data=DEEPEN)]]),
+        )
+        assistant.remember(chat_id, f"(Pesquisei na internet: {request}. Resposta: {answer.text})")
+
+    async def on_scope_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        chat_id = update.effective_chat.id
+        request = offers.pending(chat_id, clock())
+        if request is None:
+            await query.message.reply_text("Essa pergunta já expirou, senhor. Peça a pesquisa de novo.")
+            return
+        offers.clear(chat_id)
+        await run_research(query.message, chat_id, request, query.data.split(":", 1)[1])
+
+    async def on_deepen_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        request = offers.last_quick(update.effective_chat.id)
+        if request is None:
+            await query.message.reply_text("Não tenho mais a pergunta, senhor. Peça de novo.")
+            return
+        await ask_worker(query.message, update.effective_chat.id, request, scope="web")
 
     async def on_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -696,6 +776,8 @@ def build_application(settings: Settings) -> Application:
         on_unsupported,
     ))
     app.add_handler(CallbackQueryHandler(on_not_funny, pattern=f"^{NOT_FUNNY}$"))
+    app.add_handler(CallbackQueryHandler(on_scope_button, pattern=f"^{SCOPE_PREFIX}:"))
+    app.add_handler(CallbackQueryHandler(on_deepen_button, pattern=f"^{DEEPEN}$"))
     if agenda_bot is not None:
         app.add_handler(CallbackQueryHandler(on_event_undo, pattern=f"^{UNDO_PREFIX}:"))
     app.add_handler(MessageHandler(~allowed, on_stranger), group=1)

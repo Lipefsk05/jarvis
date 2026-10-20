@@ -38,6 +38,7 @@ NATURAL_LANGUAGE = (
     ("Anotar", "anota que preciso comprar pão"),
     ("Lembrete", "me lembra amanhã às 9 de pagar o aluguel"),
     ("Lembrete que repete", "toda segunda às 9 reunião"),
+    ("Pesquisar", "pesquisa o preço do dólar (eu pergunto se é no Mind ou na internet)"),
     ("Concluir tarefa", "concluí a landing do dindin"),
     ("Áudio", "mande um áudio e eu respondo como se fosse texto"),
     ("Conversa", "tire dúvidas comigo no que eu sei"),
