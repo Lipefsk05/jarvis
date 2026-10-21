@@ -15,6 +15,7 @@ class BotPlanTest(_BotCase):
         callbacks = {h.callback.__name__: h.callback for group in self.app.handlers.values() for h in group
                      if hasattr(h, "callback")}
         self.on_plan = callbacks["on_plan"]
+        self.on_capacity = callbacks["on_capacity"]
 
     def ask(self, *args):
         message = FakeMessage("/plano", self.replies)
@@ -23,6 +24,28 @@ class BotPlanTest(_BotCase):
         context = SimpleNamespace(bot=FakeBot(), application=self.app, args=list(args))
         asyncio.run(self.on_plan(update, context))
         return self.replies[-1]
+
+    def set_capacity(self, *args):
+        message = FakeMessage("/capacidade", self.replies)
+        update = SimpleNamespace(effective_message=message, effective_chat=SimpleNamespace(id=1),
+                                 effective_user=SimpleNamespace(id=1))
+        context = SimpleNamespace(bot=FakeBot(), application=self.app, args=list(args))
+        asyncio.run(self.on_capacity(update, context))
+        return self.replies[-1]
+
+    def test_capacidade_sets_a_fixed_number_shows_it_and_auto_gives_it_back(self):
+        self.assertIn("3 por dia útil, aprendidas", self.set_capacity())
+        self.assertIn("4 tarefa(s) por dia útil, fixas", self.set_capacity("4"))
+        saved = json.loads((self.state / "plano.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["load"]["fixed"], 4)
+        self.assertIn("4 por dia útil, fixas", self.set_capacity())
+        self.assertIn("aprender sozinho", self.set_capacity("auto"))
+        saved = json.loads((self.state / "plano.json").read_text(encoding="utf-8"))
+        self.assertIsNone(saved["load"]["fixed"])
+
+    def test_capacidade_rejects_nonsense(self):
+        self.assertIn("de 1 a 10", self.set_capacity("0"))
+        self.assertIn("de 1 a 10", self.set_capacity("muitas"))
 
     def test_plan_lists_the_board_tasks_by_priority_and_is_saved(self):
         reply = self.ask()

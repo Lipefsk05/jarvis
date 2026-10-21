@@ -27,6 +27,29 @@ def many(n, priority=MEDIUM, prefix="t"):
     return [task(f"{prefix}{i}", priority, area=f"area{i}") for i in range(n)]
 
 
+class WaitingTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.store = PlanStore(Path(tmp.name) / "plano.json")
+
+    def test_a_waiting_task_is_never_planned_even_when_high_and_never_a_slip(self):
+        waiting = task("Aguardar o Pedro", HIGH, waits=True, waiting_for="o Pedro aprovar", task_id="pd")
+        tasks = [waiting] + many(3)
+        rebalance(self.store, tasks, WED)
+        self.assertNotIn("Aguardar o Pedro", [i.title for p in self.store.days() for i in p.items])
+        rebalance(self.store, tasks, THU)  # the next day is judged: the waiting task is not among the ones that slipped
+        self.assertNotIn("Aguardar o Pedro", [i.title for p in self.store.days() for i in p.items])
+
+    def test_the_plan_shows_what_is_parked_waiting(self):
+        rebalance(self.store, many(2), WED)
+        waiting = [task("Aguardar o Pedro", waits=True, waiting_for="o Pedro aprovar a proposta")]
+        text = format_plan(self.store.get(WED), self.store, WED, waiting)
+        self.assertIn("Aguardando (fora do plano):", text)
+        self.assertIn("⏳ Aguardar o Pedro, o Pedro aprovar a proposta", text)
+        self.assertNotIn("Aguardando", format_plan(self.store.get(WED), self.store, WED))
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

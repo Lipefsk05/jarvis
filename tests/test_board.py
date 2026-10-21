@@ -3,7 +3,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from jarvis.board import HIGH, LOW, MEDIUM, UNRANKED, blocked, guess_needs, load_board, split
+from jarvis.board import HIGH, LOW, MEDIUM, UNRANKED, blocked, guess_needs, load_board, parse_task, split
 from jarvis.plan import NOTEBOOK, PHONE
 
 TODAY = date(2026, 10, 13)
@@ -63,6 +63,17 @@ class BoardTest(unittest.TestCase):
         self.assertTrue(blocked(site, {"vc-aluguel"}))
         self.assertFalse(blocked(site, set()))
         self.assertTrue(blocked(contract, set()))
+
+    def test_the_waiting_mark_parks_the_task_and_says_for_whom(self):
+        pedro = parse_task("empresa", "pedro", "", "", "🔴 **Aguardar o Pedro**; montar o contrato ⏳ aguardando o Pedro aprovar a proposta ^pd-contrato")
+        self.assertTrue(pedro.waits)
+        self.assertEqual(pedro.waiting_for, "o Pedro aprovar a proposta")
+        self.assertEqual(pedro.task_id, "pd-contrato")
+        self.assertNotIn("⏳", pedro.title)
+        self.assertNotIn("proposta", pedro.title)
+        bare = parse_task("empresa", "pedro", "", "", "🟡 Resposta do cliente ⏳")
+        self.assertEqual((bare.waits, bare.waiting_for), (True, ""))
+        self.assertFalse(parse_task("pessoal", "casa", "", "", "🟡 Trocar a lâmpada").waits)
 
     def test_where_and_how_long(self):
         self.assertEqual(self.tasks["Estudar canto"].needs, PHONE)

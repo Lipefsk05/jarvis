@@ -46,6 +46,29 @@ class CapacityTest(unittest.TestCase):
         self.assertEqual(Load(base=MIN_CAPACITY).capacity(date(2026, 10, 18)), MIN_CAPACITY)  # Sunday never reaches 0
 
 
+class FixedCapacityTest(unittest.TestCase):
+    def test_a_fixed_number_is_the_capacity_and_is_never_learned_away(self):
+        load = Load(fixed=4)
+        self.assertEqual(load.capacity(date(2026, 10, 14)), 4)
+        self.assertEqual(load.capacity(date(2026, 10, 18)), 3)  # Sunday holds one less
+        self.assertEqual(load.capacity(date(2026, 10, 17)), 0)  # Saturday is still rest
+        for _ in range(6):
+            load.record(DAY, False)  # days with a task waiting on someone: no penalty
+        self.assertEqual((load.base, load.short, load.capacity(DAY)), (3, 0, 4))
+
+    def test_auto_gives_the_choice_back_to_the_planner(self):
+        load = Load(fixed=5)
+        load.fixed = None
+        load.record(DAY, False)
+        load.record(DAY, False)
+        self.assertEqual(load.base, 2)
+
+    def test_fixed_survives_a_restart_and_stays_in_range(self):
+        self.assertEqual(Load.from_json(Load(fixed=6).to_json()).fixed, 6)
+        self.assertEqual(Load.from_json({"fixed": 99}).fixed, 10)
+        self.assertIsNone(Load.from_json({"base": 3}).fixed)
+
+
 class StoreTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

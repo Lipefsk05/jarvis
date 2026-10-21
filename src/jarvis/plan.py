@@ -30,6 +30,7 @@ MAX_TITLE_CHARS = 200
 
 BASE_CAPACITY = 3    # tasks in a weekday at first; Sunday holds one less
 MIN_CAPACITY, MAX_CAPACITY = 1, 8
+MAX_FIXED = 10      # the ceiling of a capacity the Felipe sets by hand (/capacidade)
 STREAK_DAYS = 2      # days in a row (all done / some left) before the capacity moves by one
 
 
@@ -41,14 +42,18 @@ class Load:
     short: int = 0                  # days in a row with something left over
     settled: date | None = None
     rebalanced: date | None = None  # the day the planner last refilled the calendar
+    fixed: int | None = None        # set by hand (/capacidade): the day holds exactly this, and nothing is learned
 
     def capacity(self, day: date) -> int:
         if day.weekday() == SABBATH_WEEKDAY:
             return 0
-        return max(MIN_CAPACITY, self.base - 1) if day.weekday() == 6 else self.base
+        size = self.base if self.fixed is None else self.fixed
+        return max(MIN_CAPACITY, size - 1) if day.weekday() == 6 else size
 
     def record(self, day: date, delivered_all: bool) -> None:
         """Judge one finished day (sabbath excluded by the caller) and move the capacity if the streak is long enough."""
+        if self.fixed is not None:
+            return  # a number chosen by hand is not second-guessed: a day with something left over teaches nothing
         if delivered_all:
             self.full, self.short = self.full + 1, 0
         else:
@@ -61,15 +66,17 @@ class Load:
     def to_json(self) -> dict:
         return {"base": self.base, "full": self.full, "short": self.short,
                 "settled": self.settled.isoformat() if self.settled else None,
-                "rebalanced": self.rebalanced.isoformat() if self.rebalanced else None}
+                "rebalanced": self.rebalanced.isoformat() if self.rebalanced else None, "fixed": self.fixed}
 
     @staticmethod
     def from_json(raw: dict) -> "Load":
         def when(key: str) -> date | None:
             return date.fromisoformat(raw[key]) if raw.get(key) else None
         base = int(raw.get("base", BASE_CAPACITY))
+        fixed = raw.get("fixed")
         return Load(min(MAX_CAPACITY, max(MIN_CAPACITY, base)), max(0, int(raw.get("full", 0))),
-                    max(0, int(raw.get("short", 0))), when("settled"), when("rebalanced"))
+                    max(0, int(raw.get("short", 0))), when("settled"), when("rebalanced"),
+                    None if fixed is None else min(MAX_FIXED, max(MIN_CAPACITY, int(fixed))))
 
 
 @dataclass

@@ -51,7 +51,7 @@ from .reminder_flow import Dropped, ReminderFlow
 from .reminder_request import PlannedSeries, is_schedule, parse_misheard_request
 from .reminder_text import confirmation, listing, series_confirmation
 from .board import load_board
-from .plan import PlanStore
+from .plan import MAX_FIXED, MIN_CAPACITY, PlanStore
 from .planner import advance, complete, format_plan, format_week, progress, rebalance
 from .reminders import ReminderError, ReminderStore
 from .when import Ask
@@ -272,9 +272,35 @@ def build_application(settings: Settings) -> Application:
     async def on_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Today's plan (or the week, with "/plano semana"); asking also refills the calendar from the board."""
         today = clock().date()
-        await refresh_plan()
+        tasks = await refresh_plan()
+        waiting = [t for t in tasks if t.depth == 0 and t.waiting_for and not t.idea]
         asked = " ".join(context.args or []).lower()
-        text = format_week(plans, today) if asked.startswith("sem") else format_plan(plans.get(today), plans, today)
+        text = format_week(plans, today) if asked.startswith("sem") else format_plan(plans.get(today), plans, today, waiting)
+        await update.effective_message.reply_text(text)
+        assistant.remember(update.effective_chat.id, text)
+
+    async def on_capacity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/capacidade [N|auto]: how many tasks a working day holds. A number is kept as it is (nothing is learned, so a
+        task waiting on someone never lowers it); "auto" gives the choice back to the planner."""
+        today = clock().date()
+        load = plans.load
+        asked = (context.args or [""])[0].strip().lower()
+        if not asked:
+            now = f"{load.fixed} por dia útil, fixas" if load.fixed is not None else f"{load.base} por dia útil, aprendidas"
+            text = f"Capacidade atual, senhor: {now}. Para mudar, /capacidade 4; para eu voltar a aprender, /capacidade auto."
+        elif asked in ("auto", "automatico", "automático"):
+            load.fixed = None
+            plans.save(today)
+            await refresh_plan()
+            text = f"Voltei a aprender sozinho, senhor: {load.base} por dia útil por enquanto."
+        elif asked.isdigit() and MIN_CAPACITY <= int(asked) <= MAX_FIXED:
+            load.fixed = int(asked)
+            plans.save(today)
+            await refresh_plan()
+            text = (f"Combinado, senhor: {load.fixed} tarefa(s) por dia útil, fixas. Domingo uma a menos; sábado, descanso. "
+                    "Não vou reduzir sozinho se algum dia sobrar coisa.")
+        else:
+            text = f"Diga um número de {MIN_CAPACITY} a {MAX_FIXED}, senhor, ou \"auto\"."
         await update.effective_message.reply_text(text)
         assistant.remember(update.effective_chat.id, text)
 
@@ -764,6 +790,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("uso", on_usage, filters=allowed))
     app.add_handler(CommandHandler("tarefas", on_tasks, filters=allowed))
     app.add_handler(CommandHandler("plano", on_plan, filters=allowed))
+    app.add_handler(CommandHandler("capacidade", on_capacity, filters=allowed))
     app.add_handler(CommandHandler("agenda", on_agenda, filters=allowed))
     app.add_handler(CommandHandler(["ajuda", "help"], on_help, filters=allowed))
     app.add_handler(CommandHandler(["esquece", "esquecer"], on_forget, filters=allowed))

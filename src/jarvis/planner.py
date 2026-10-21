@@ -239,25 +239,38 @@ def progress(plan: DayPlan | None) -> str:
     return f"{sum(1 for i in counted if i.status == DONE)} de {len(counted)}"
 
 
-def format_plan(plan: DayPlan | None, store: PlanStore, today: date) -> str:
-    """Today's plan as a Telegram message, with a one-line look at what comes next."""
+def _waiting_block(waiting: list[BoardTask]) -> str:
+    """The tasks parked with ⏳, so waiting on someone is visible and never mistaken for work left undone."""
+    if not waiting:
+        return ""
+    lines = ["\nAguardando (fora do plano):"]
+    lines.extend(f"⏳ {_short(t.title)}" + (f", {t.waiting_for}" if t.waiting_for else "") for t in waiting[:5])
+    if len(waiting) > 5:
+        lines.append(f"… e mais {len(waiting) - 5}.")
+    return "\n".join(lines)
+
+
+def format_plan(plan: DayPlan | None, store: PlanStore, today: date, waiting: list[BoardTask] | None = None) -> str:
+    """Today's plan as a Telegram message, with a one-line look at what comes next and what is parked waiting."""
     load = store.load
     if load.capacity(today) == 0:
         return "Hoje é sábado, senhor: tempo sagrado, nada de tarefa mundana. Descanse."
     if plan is None or not plan.items:
-        return "Não achei nada pendente que caiba no seu dia, senhor."
+        return "Não achei nada pendente que caiba no seu dia, senhor." + _waiting_block(waiting or [])
     lines = [f"Plano de hoje ({today:%d/%m}), senhor:"]
     lines.extend(_line(i) for i in plan.items)
     lines.append(f"\nFeitas: {progress(plan)}.")
     tomorrow = next((p for p in store.days() if p.day > today and p.items), None)
     if tomorrow:
         lines.append(f"Em seguida ({_WEEKDAYS[tomorrow.day.weekday()]} {tomorrow.day:%d/%m}): {len(tomorrow.items)} tarefa(s).")
-    return "\n".join(lines)
+    return "\n".join(lines) + _waiting_block(waiting or [])
 
 
 def format_week(store: PlanStore, today: date, days: int = 7) -> str:
     """The next `days` days, one block each; days with nothing planned are left out."""
-    lines = [f"Próximos dias, senhor (capacidade: {store.load.base} por dia útil):"]
+    load = store.load
+    size = f"{load.fixed} fixas" if load.fixed is not None else f"{load.base}, aprendidas"
+    lines = [f"Próximos dias, senhor (capacidade: {size} por dia útil):"]
     for offset in range(days):
         day = today + timedelta(days=offset)
         plan = store.get(day)

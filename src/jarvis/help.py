@@ -17,6 +17,7 @@ class Command:
 COMMANDS = (
     Command("tarefas", "[área]", "Pendências do seu Mind", "pendências do Mind, por área."),
     Command("plano", "[semana]", "O plano de hoje", "tarefas de hoje; com \"semana\", os próximos dias."),
+    Command("capacidade", "[número|auto]", "Quantas tarefas por dia", "quantas tarefas por dia útil o plano reserva, fixas (ex.: /capacidade 4); \"auto\" volta a aprender sozinho; sem argumento mostra o atual."),
     Command("agenda", "[dia]", "A agenda do Google", "compromissos das 3 agendas; sem dia, hoje."),
     Command("anota", "<texto>", "Guarda uma nota no inbox do Mind", "guarda uma nota no inbox."),
     Command("pede", "<pedido>", "Pesquisa no Mind em segundo plano", "pesquisa nas suas notas em segundo plano e avisa quando termina; só leitura."),

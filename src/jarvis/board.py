@@ -1,7 +1,7 @@
 """The Mind's task board as the planner needs it: pending tasks with their markers (stdlib only, read-only).
 
 Markers are the ones in tarefas/tarefas.md: 🔴🟡🟢 priority, 💡 idea, 📚 study (never in the daily plan), 📅 AAAA-MM-DD deadline, a trailing ^id,
-and ⛓ depende de ^id. Two optional ones say *where* and *how long*: 📱 (phone is enough), 💻 (needs the
+⛓ depende de ^id, and ⏳ aguardando <quem/o quê> (waiting on someone: never planned, never a "slip", listed apart). Two optional ones say *where* and *how long*: 📱 (phone is enough), 💻 (needs the
 notebook) and ⏱ 30min / ⏱ 2h. Without a marker, where is guessed from the words ("ligar", "pagar", "estudar"
 = phone) and defaults to the notebook, so nothing heavy is ever sent to the bus by accident. Only the board is
 read here; deciding what goes in the day is the planner's job.
@@ -27,6 +27,7 @@ _ID = re.compile(r"\s\^([a-z0-9][a-z0-9-]*)\s*$")
 _DUE = re.compile(r"📅\s*(\d{4})-(\d{2})-(\d{2})")
 _DEPENDS = re.compile(r"⛓\s*depende\s+(?:de|do|da)\b([^.;\n]*)")
 _REF = re.compile(r"\^([a-z0-9][a-z0-9-]*)")
+_WAITING = re.compile(r"⏳\s*(?:aguardando\s+)?([^.;\n^]*)")
 _MINUTES = re.compile(r"⏱\s*(\d+)\s*(min|m|h)\b")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 
@@ -62,6 +63,7 @@ class BoardTask:
     needs_marked: bool  # needs came from 📱/💻, not from the word guess
     minutes: int        # 0 = unknown
     study: bool = False  # 📚: waits for a study plan, never in the daily plan
+    waiting_for: str = ""  # ⏳: who or what the task waits for ("o Pedro aprovar a proposta"); implies `waits`
 
     @property
     def key(self) -> str:
@@ -110,6 +112,10 @@ def parse_task(group: str, area: str, section: str, indent: str, body: str) -> B
     if dep:
         depends = tuple(dict.fromkeys(_REF.findall(dep.group(1))))
         waits = not depends
+    waiting = _WAITING.search(text)
+    waiting_for = " ".join(waiting.group(1).split()).strip(" ,") if waiting else ""
+    if waiting:
+        waits = True  # "⏳ ..." is the explicit way to say it: out of the plan, without counting as a slip
     plain = _BOLD.sub(r"\1", text)
     if "📱" in text:
         needs, marked = PHONE, True
@@ -119,7 +125,7 @@ def parse_task(group: str, area: str, section: str, indent: str, body: str) -> B
         needs, marked = guess_needs(plain), False
     return BoardTask(
         group, area, section, short_title(_clean(text)), len(indent) // 2, priority, idea, due, task_id, depends,
-        waits, needs, marked, _minutes(text), study,
+        waits, needs, marked, _minutes(text), study, waiting_for,
     )
 
 
@@ -127,8 +133,9 @@ def _clean(text: str) -> str:
     """Drop the markers so the title reads as a sentence."""
     text = _DUE.sub("", text)
     text = _DEPENDS.sub("", text)
+    text = _WAITING.sub("", text)
     text = _MINUTES.sub("", text)
-    for symbol in ("🔴", "🟡", "🟢", "💡", "📚", "📱", "💻", "⛓"):
+    for symbol in ("🔴", "🟡", "🟢", "💡", "📚", "📱", "💻", "⛓", "⏳"):
         text = text.replace(symbol, "")
     return text.strip()
 
