@@ -37,6 +37,16 @@ C:\Users\felip\jarvis-voice-venv\Scripts\python.exe bench_stt.py
 ```
 Do WSL: `powershell.exe -NoProfile -Command "& 'C:\Users\felip\jarvis-voice-venv\Scripts\python.exe' bench_tts.py"`. Os WAVs saem em `C:\Users\felip\jarvis-voice-out`.
 
+## Modo dev: falar direto com o trabalho de programação (`dev.py`, 2026-10-21)
+
+"Jarvis, modo dev" liga; "modo casual" desliga (ou `talk.py --dev` já começa ligado). Ligado, cada frase vai pro Claude Code por trás (`claude -p`, mesma sessão continuada com `--resume`), **rodando no Mind** com os outros projetos à vista e com as configurações do próprio terminal; a voz continua sendo a do Jarvis e a ferramenta nunca é citada.
+
+- **Avisos enquanto trabalha**: frases variadas (nunca a mesma duas vezes seguidas), as de arquivo/teste vêm dos eventos reais, no máximo uma a cada 8 s; se demorar, "ainda estou trabalhando" a cada ~12 s. Chamar "Jarvis" pelo nome corta o trabalho.
+- **Resposta**: resumo falado de 3 a 5 frases; o texto completo vai pro Telegram quando passa disso.
+- **Permissões**: lê e edita à vontade; o que as configurações do terminal não liberam volta como negado e o Jarvis pergunta em voz: "sim" (só desta sessão), "sempre" (salva uma regra estreita em `jarvis-voice-out\dev.json`) ou "não". `git push`, `commit`, `rm -rf`, `sudo`, comando encadeado e afins **sempre perguntam** (só "sim"/"não"). "O que eu autorizei?" lista; "tira a autorização do X" revoga. Sair do modo zera as autorizações da sessão.
+- **Teto**: 10 min por frase (`ceiling_s` no `dev.json`); "tira o teto" / "põe o teto de volta".
+- Testes: `test_dev.py` (22, sem áudio nem rede). O fluxo com `claude -p` real foi conferido à mão (resposta como Jarvis, sessão continuada, negação de `curl` virando pergunta).
+
 ## Etapa 3: abrir a conversa só falando "Jarvis" (`talk.py --standby`, 2026-10-21)
 
 Sem Enter: o microfone fica aberto e, com a conversa **fechada**, tudo que é dito só passa por uma checagem barata do Whisper (sem prompt de vocabulário, no máximo 24 tokens, tudo local); sem o nome, é descartado em silêncio. Com o nome ("Jarvis, que horas são?"), a conversa abre e a mesma frase já é o pedido (o pre-roll de 1 s do VAD guarda o começo da palavra). "Tchau" ou 20 s de silêncio **fecham** a conversa e ela volta a esperar o nome, em vez de encerrar o programa. O detector é o Whisper turbo + variantes do nome (ver `has_name`); openWakeWord e Porcupine foram avaliados e descartados (nó do Jarvis no Mind).

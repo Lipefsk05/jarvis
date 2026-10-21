@@ -12,6 +12,8 @@ Run in the Windows venv:
     python talk.py --list                   list the audio devices
     python talk.py --standby                no Enter: the microphone stays open and saying "Jarvis" opens the conversation
                                             (what is said without his name is only checked, never answered; Ctrl+C exits)
+    python talk.py --dev                    start in dev mode: the work happens in the Mind with the full Claude Code behind
+                                            the Jarvis voice ("modo dev" / "modo casual" switch it by voice; dev.py explains)
     python talk.py --simulate               no devices: synthetic voices play the owner (proves the interruption)
     python talk.py --save-audio             also keep each thing you say as a WAV in the output folder (local only),
                                             so bench_clips.py can compare Whisper models on your real voice
@@ -27,6 +29,7 @@ import threading
 import time
 from datetime import datetime
 
+import dev
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -125,6 +128,7 @@ def main() -> None:
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--save-audio", action="store_true")
     parser.add_argument("--standby", action="store_true")
+    parser.add_argument("--dev", action="store_true", help="start in dev mode (otherwise say \"modo dev\")")
     args = parser.parse_args()
     if args.list:
         for i, d in enumerate(sd.query_devices()):
@@ -185,7 +189,7 @@ def main() -> None:
         # No vocabulary prompt in the check: on a chunk with little speech Whisper repeats the prompt back, and a prompt
         # that contains "Jarvis" would then "hear" his name in silence (a false interruption).
         extra = ({"max_new_tokens": 24, "without_timestamps": True} if quick
-                 else {"initial_prompt": "Jarvis, Dindin, Firebase, Mind, Groq, Telegram."})
+                 else {"initial_prompt": "Jarvis, Dindin, Firebase, Mind, Groq, Telegram, Duplex, Forge, Domo, MindView, modo dev, modo casual."})
         segments, _ = whisper.transcribe(audio, language="pt", beam_size=1, vad_filter=False,
                                          condition_on_previous_text=False, **extra)
         text = " ".join(s.text.strip() for s in segments)
@@ -194,6 +198,48 @@ def main() -> None:
         print(f"  [Whisper{' (checagem)' if quick else ''} {time.perf_counter() - started:.2f} s, {len(audio) / RATE:.1f} s de áudio]"
               + f" «{text}»")
         return text
+
+    def speak(texts: queue.Queue, speech, player: Player, first: dict, t0: float) -> None:
+        """Turn the sentences that arrive in `texts` ((index, text) pairs, None at the end) into sound, one by one."""
+        import edge_tts
+
+        async def one(sentence: str) -> bytes:
+            data = bytearray()
+            stream = edge_tts.Communicate(for_speech(sentence, table), VOICE).stream()
+            try:
+                async for chunk in stream:
+                    if speech.cancelled.is_set():
+                        break
+                    if chunk["type"] == "audio":
+                        data += chunk["data"]
+            finally:
+                await stream.aclose()  # a cut sentence must still close its connection
+            return bytes(data)
+
+        loop = asyncio.new_event_loop()
+        try:
+            while (item := texts.get()) is not None:
+                index, sentence = item
+                if speech.cancelled.is_set():
+                    continue
+                try:
+                    data = loop.run_until_complete(one(sentence))
+                except Exception as exc:
+                    print(f"  (a voz falhou: {type(exc).__name__})")
+                    continue
+                if speech.cancelled.is_set() or not data:
+                    continue
+                audio, rate = sf.read(io.BytesIO(data), dtype="float32")
+                if first["sound"] is None:
+                    first["sound"] = time.perf_counter() - t0
+                    token, ready = first["token"] or 0.0, first["sentence"] or 0.0
+                    print(f"  jarvis (1º som {first['sound']:.2f} s após a transcrição = 1º token do Groq {token:.2f} + "
+                          f"1ª frase pronta +{ready - token:.2f} + voz Edge +{first['sound'] - ready:.2f}): {sentence}")
+                else:
+                    print(f"  jarvis: {sentence}")
+                player.enqueue(index, audio, rate)
+        finally:
+            speech.generating = False
 
     # --- thinking and speaking, cancellable ---------------------------------------------------------------
     def start_speech(heard: str, history: list[dict], speech, player: Player) -> None:
@@ -239,45 +285,7 @@ def main() -> None:
                 texts.put(None)
 
         def voice() -> None:
-            import edge_tts
-
-            async def one(sentence: str) -> bytes:
-                data = bytearray()
-                stream = edge_tts.Communicate(for_speech(sentence, table), VOICE).stream()
-                try:
-                    async for chunk in stream:
-                        if speech.cancelled.is_set():
-                            break
-                        if chunk["type"] == "audio":
-                            data += chunk["data"]
-                finally:
-                    await stream.aclose()  # a cut sentence must still close its connection
-                return bytes(data)
-
-            loop = asyncio.new_event_loop()
-            try:
-                while (item := texts.get()) is not None:
-                    index, sentence = item
-                    if speech.cancelled.is_set():
-                        continue
-                    try:
-                        data = loop.run_until_complete(one(sentence))
-                    except Exception as exc:
-                        print(f"  (a voz falhou: {type(exc).__name__})")
-                        continue
-                    if speech.cancelled.is_set() or not data:
-                        continue
-                    audio, rate = sf.read(io.BytesIO(data), dtype="float32")
-                    if first["sound"] is None:
-                        first["sound"] = time.perf_counter() - t0
-                        token, ready = first["token"] or 0.0, first["sentence"] or 0.0
-                        print(f"  jarvis (1º som {first['sound']:.2f} s após a transcrição = 1º token do Groq {token:.2f} + "
-                              f"1ª frase pronta +{ready - token:.2f} + voz Edge +{first['sound'] - ready:.2f}): {sentence}")
-                    else:
-                        print(f"  jarvis: {sentence}")
-                    player.enqueue(index, audio, rate)
-            finally:
-                speech.generating = False
+            speak(texts, speech, player, first, t0)
 
         threading.Thread(target=think, daemon=True).start()
         threading.Thread(target=voice, daemon=True).start()
@@ -329,6 +337,174 @@ def main() -> None:
 
     prepare_acks()
 
+    # --- dev mode: "modo dev" on, "modo casual" off; the work happens in the Mind, the voice stays the Jarvis ---------
+    dev.write_briefing()
+    dev_settings = dev.Settings.load(OUT / "dev.json")
+    dev_state = {"on": args.dev, "session": None, "extra": [], "pending": None}
+    try:
+        tg_token = read_env("TELEGRAM_BOT_TOKEN")
+        tg_chat = read_env("TELEGRAM_ALLOWED_USER_IDS").split(",")[0].strip()
+    except (SystemExit, OSError):
+        tg_token = tg_chat = ""
+    _NO, _ALWAYS = re.compile(r"\b(?:nao|negado|nega|recuso|cancela)\b"), re.compile(r"\bsempre\b")
+    _YES = re.compile(r"\b(?:sim|pode|claro|autoriz\w+|libera\w*|vai|faz|manda|ok|beleza)\b")
+
+    def permission_answer(text: str) -> str | None:
+        """"yes" / "always" / "no" when a short sentence answers the permission question, else None."""
+        folded = fold(text)
+        if len(folded.split()) > 7:
+            return None
+        if _NO.search(folded):
+            return "no"
+        if _ALWAYS.search(folded):
+            return "always"
+        return "yes" if _YES.search(folded) else None
+
+    def session_rule(denial: dict) -> str:
+        """What to allow for the rest of this dev session after a "sim": the exact command, the exact file, or the tool."""
+        tool, data = denial.get("tool_name", ""), denial.get("tool_input", {}) or {}
+        if tool == "Bash":
+            return f"Bash({str(data.get('command', '')).strip()})"
+        if data.get("file_path"):
+            return f"{tool}({data['file_path']})"
+        return tool
+
+    def intercept(heard: str) -> bool:
+        """Mode switches and dev settings are the Jarvis's own business: they never reach the work."""
+        mode = dev.parse_mode(heard)
+        if mode == "dev":
+            dev_state["on"] = True
+            say("Modo dev ligado, senhor. Estou no Mind, com os outros projetos à vista.")
+            return True
+        if mode == "casual":
+            dev_state.update(on=False, session=None, extra=[], pending=None)  # leaving forgets this session's permissions
+            say("Voltando ao modo casual, senhor.")
+            return True
+        if not dev_state["on"]:
+            return False
+        setting = dev.parse_setting(heard)
+        if setting is None:
+            return False
+        kind, argument = setting
+        if kind == "ceiling_off":
+            dev_settings.ceiling = False
+            dev_settings.save()
+            say("Teto desligado, senhor. Só paro se o senhor mandar.")
+        elif kind == "ceiling_on":
+            dev_settings.ceiling = True
+            dev_settings.save()
+            say(f"Teto de {dev_settings.ceiling_s / 60:.0f} minutos de volta, senhor.")
+        elif kind == "list":
+            say(dev_settings.listing())
+        else:
+            gone = dev_settings.revoke(argument)
+            say(f"Retirei {len(gone)} autorização(ões), senhor." if gone else "Não achei essa autorização, senhor.")
+        return True
+
+    def start_dev(heard: str, speech, player: Player) -> None:
+        """One sentence of the dev conversation: the work runs in the background, spoken lines fill the wait, and the
+        summary is spoken at the end (the full text goes to the Telegram)."""
+        texts: queue.Queue = queue.Queue()
+        t0 = time.perf_counter()
+        first = {"sound": None, "token": None, "sentence": None}
+        prompt, preface = heard, ""
+        pending, dev_state["pending"] = dev_state["pending"], None
+        if pending is not None:
+            answer = permission_answer(heard)
+            denial = pending["denial"]
+            if answer in ("yes", "always"):
+                rule = dev.rule_for(denial)
+                dev_state["extra"].append(session_rule(denial))
+                if answer == "always" and rule:
+                    dev_settings.remember(rule)
+                elif answer == "always":
+                    preface = "Esse eu sempre vou perguntar, senhor; liberei só desta vez."
+                prompt = "Autorizado, pode seguir com isso."
+            elif answer == "no":
+                prompt = "Não autorizado. Siga sem isso e me diga o que ficou de fora."
+        if prompt is heard:
+            prompt = dev.fix_names(heard)
+
+        def emit(text: str) -> None:
+            index = len(speech.sentences)
+            speech.sentences.append(text)
+            texts.put((index, text))
+
+        def work() -> None:
+            last = {"line": None, "at": time.perf_counter()}
+            done = threading.Event()
+
+            def say_progress(line: str) -> None:
+                emit(line)
+                last.update(line=line, at=time.perf_counter())
+
+            def on_tool(name: str, data: dict) -> None:
+                if time.perf_counter() - last["at"] < 8 or speech.cancelled.is_set():
+                    return  # at most one line per 8 s: the work should not turn into a running commentary
+                if (line := dev.progress_line(name, data, last["line"])):
+                    say_progress(line)
+
+            def ticker() -> None:
+                while not done.wait(2.0):
+                    if time.perf_counter() - last["at"] > 12 and not speech.cancelled.is_set():
+                        say_progress(dev.pick(dev.STILL, last["line"]))
+
+            try:
+                if preface:
+                    emit(preface)
+                say_progress(dev.pick(dev.THINKING, None))
+                threading.Thread(target=ticker, daemon=True).start()
+                result = dev.run_turn(prompt, dev_state["session"], dev_settings.tools(dev_state["extra"]),
+                                      dev_settings.ceiling_s if dev_settings.ceiling else None, on_tool, speech.cancelled)
+                done.set()
+                if result.session_id:
+                    dev_state["session"] = result.session_id
+                print(f"  [trabalho: {result.seconds:.0f} s{', estourou o teto' if result.timed_out else ''}"
+                      f"{', cortado pelo nome' if result.cancelled else ''}]")
+                if result.cancelled:
+                    return
+                if result.timed_out:
+                    emit("Isso passou do tempo que me dei, senhor. Se quiser que eu continue, é só dizer.")
+                elif result.error and not result.text.strip():
+                    print(f"  (o trabalho falhou: {result.error})")
+                    emit("Tive um problema com isso, senhor.")
+                else:
+                    spoken, full = dev.split_reply(result.text)
+                    # with a denial the explanation is just noise before the question: the first two sentences are enough
+                    for sentence in re.split(r"(?<=[.!?])\s+", dev.speakable(spoken, 2 if result.denials else 5)):
+                        if sentence.strip():
+                            emit(sentence.strip())
+                    if tg_token and tg_chat and (full != spoken or len(full) > 700):
+                        dev.send_telegram(tg_token, tg_chat, full)
+                    if result.denials:
+                        denial = result.denials[0]
+                        kind = dev.classify(denial, dev.settings_rules("deny"), dev.settings_rules("ask"))
+                        print(f"  [negado: {denial.get('tool_name')} {denial.get('tool_input')} -> {kind}]")
+                        if kind == "deny":
+                            emit(f"Isso está bloqueado nas suas configurações, senhor ({dev.describe(denial)}); nem com autorização eu consigo.")
+                        elif kind == "ask":
+                            emit(f"Preciso {dev.describe(denial)}, senhor, e as suas configurações pedem a sua aprovação direta; "
+                                 "por voz eu ainda não consigo recebê-la.")
+                            if tg_token and tg_chat:
+                                dev.send_telegram(tg_token, tg_chat, "Preciso da sua aprovação para: " + str(denial.get("tool_input", {}).get("command", denial)))
+                        else:
+                            dev_state["pending"] = {"denial": denial}
+                            options = "sim, sempre ou não" if not dev.never_forever(denial) else "sim ou não"
+                            emit(f"Preciso {dev.describe(denial)}, senhor. Autoriza? Diga {options}.")
+            except Exception as exc:  # the conversation must outlive any failure of the work
+                print(f"  (erro no trabalho: {type(exc).__name__}: {exc})")
+                emit("Tive um problema com isso, senhor.")
+            finally:
+                done.set()
+                texts.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=speak, args=(texts, speech, player, first, t0), daemon=True).start()
+
+    def route_speech(heard: str, history: list[dict], speech, player: Player) -> None:
+        (start_dev(heard, speech, player) if dev_state["on"] else start_speech(heard, history, speech, player))
+
+
     # --- the microphone: always open, 32 ms frames ----------------------------------------------------------
     blocks: queue.Queue = queue.Queue()
 
@@ -338,8 +514,8 @@ def main() -> None:
         except queue.Empty:
             return None
 
-    conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, start_speech, say=say, ack=ack,
-                                idle_s=args.idle, log=stamp, standby=args.standby and not simulated)
+    conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, route_speech, say=say, ack=ack,
+                                idle_s=args.idle, log=stamp, standby=args.standby and not simulated, intercept=intercept)
     if simulated:
         simulate(conversation, blocks, player, stamp)
         return
