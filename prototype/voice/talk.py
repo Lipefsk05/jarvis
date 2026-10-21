@@ -10,6 +10,8 @@ Run in the Windows venv:
     python talk.py                          Logitech microphone, default output
     python talk.py --mic Logitech --out Realtek   pick devices by a part of their name
     python talk.py --list                   list the audio devices
+    python talk.py --standby                no Enter: the microphone stays open and saying "Jarvis" opens the conversation
+                                            (what is said without his name is only checked, never answered; Ctrl+C exits)
     python talk.py --simulate               no devices: synthetic voices play the owner (proves the interruption)
     python talk.py --save-audio             also keep each thing you say as a WAV in the output folder (local only),
                                             so bench_clips.py can compare Whisper models on your real voice
@@ -122,6 +124,7 @@ def main() -> None:
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--save-audio", action="store_true")
+    parser.add_argument("--standby", action="store_true")
     args = parser.parse_args()
     if args.list:
         for i, d in enumerate(sd.query_devices()):
@@ -336,9 +339,20 @@ def main() -> None:
             return None
 
     conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, start_speech, say=say, ack=ack,
-                                idle_s=args.idle, log=stamp)
+                                idle_s=args.idle, log=stamp, standby=args.standby and not simulated)
     if simulated:
         simulate(conversation, blocks, player, stamp)
+        return
+    if args.standby:
+        print("\n  (em espera: o microfone fica aberto e só 'Jarvis' abre a conversa; Ctrl+C sai)")
+        vad.reset()
+        try:
+            with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=FRAME, device=mic,
+                                callback=lambda data, *_: blocks.put(data[:, 0].copy())):
+                conversation.run()
+        except KeyboardInterrupt:
+            print("\n  (saindo)")
+        player.close()
         return
     while True:
         if input("\nEnter para abrir a conversa (q + Enter sai): ").strip().lower() == "q":

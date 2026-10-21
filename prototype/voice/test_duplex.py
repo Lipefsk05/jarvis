@@ -100,7 +100,7 @@ class NameTest(unittest.TestCase):
             self.assertFalse(d.has_name(text), text)  # "já vi" is common speech: it must never count as his name
 
     def test_mishearings_of_the_name_count_only_when_they_are_the_whole_utterance(self):
-        for text in ("Jams.", "Jerms", "Jabs", "Jens.", "Gervis.", "J'ai a vis. J'ai a vis.", "Ei, Jams"):
+        for text in ("Gavis.", "Jams.", "Jerms", "Jabs", "Jens.", "Gervis.", "J'ai a vis. J'ai a vis.", "Ei, Jams"):
             self.assertTrue(d.has_name(text), text)
             self.assertEqual(d.strip_name(text), "", text)
         for text in ("O Jens me mandou um vídeo", "Jens, me explica o Firebase", "Tchau", "jams de música"):
@@ -126,7 +126,7 @@ def seconds_of(frame, seconds): return [frame()] * int(seconds / d.FRAME_S)
 
 
 class ConversationTest(unittest.TestCase):
-    def build(self, script, hook=None):
+    def build(self, script, hook=None, standby=False, idle_s=1e9):
         """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
         `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
@@ -154,8 +154,8 @@ class ConversationTest(unittest.TestCase):
             speech.generating = False
 
         self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
-                                   say=self.said.append, ack=lambda: self.acks.append(1), clock=lambda: self.now, idle_s=1e9,
-                                   log=self.logs.append)
+                                   say=self.said.append, ack=lambda: self.acks.append(1), clock=lambda: self.now, idle_s=idle_s,
+                                   log=self.logs.append, standby=standby)
 
     def run_conv(self):
         try:
@@ -337,6 +337,42 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(self.said, ["Até logo, senhor."])
         self.assertEqual(self.started, [])
+
+    def test_standby_ignores_what_does_not_start_with_his_name(self):
+        self.heard = ["Bom dia."]  # only the cheap check runs: nothing is answered, nothing is spent
+        self.build(self.sentence(), standby=True)
+        self.run_conv()
+        self.assertEqual(self.started, [])
+        self.assertEqual(self.heard, [])
+
+    def test_standby_opens_with_his_name_and_the_same_sentence_is_the_request(self):
+        self.heard = ["Jarvis, que horas são?", "Jarvis, que horas são?"]  # the check, then the full transcription
+        self.build(self.sentence(), standby=True)
+        self.run_conv()
+        self.assertEqual(self.started, ["que horas são?"])
+
+    def test_standby_after_the_call_the_next_sentence_needs_no_name(self):
+        self.heard = ["Jarvis.", "Jarvis.", "Me fala do tempo."]
+        self.build(self.sentence() + self.sentence(), standby=True)
+        self.run_conv()
+        self.assertEqual(self.acks, [1])
+        self.assertEqual(self.started, ["Me fala do tempo."])
+
+    def test_standby_goodbye_closes_instead_of_ending_and_the_name_opens_it_again(self):
+        self.heard = ["Jarvis, tchau.", "Jarvis, tchau.", "Bom dia.", "Jarvis, que horas são?", "Jarvis, que horas são?"]
+        self.build(self.sentence() + self.sentence() + self.sentence(), standby=True)
+        self.run_conv()
+        self.assertEqual(self.said, ["Até logo, senhor."])
+        self.assertEqual(self.started, ["que horas são?"])  # the "Bom dia." in between was closed-conversation noise
+        self.assertIn("  (conversa fechada: chame 'Jarvis' pra abrir)", self.logs)
+
+    def test_standby_silence_closes_the_conversation_and_it_keeps_running(self):
+        self.heard = ["Jarvis, oi.", "Jarvis, oi.", "Conversa lateral.", "Jarvis, e agora?", "Jarvis, e agora?"]
+        self.build(self.sentence() + seconds_of(quiet, 6.0) + self.sentence() + self.sentence(), standby=True, idle_s=3.0,
+                   hook=self.playing())
+        self.run_conv()
+        self.assertEqual(self.started, ["oi", "e agora?"])
+        self.assertIn("  (conversa fechada: chame 'Jarvis' pra abrir)", self.logs)
 
     def test_idle_for_too_long_ends_the_conversation(self):
         ticks = iter(range(100))

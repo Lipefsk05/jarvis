@@ -51,7 +51,7 @@ _NAME_AT_START = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa|pera|peraí|pera ai
 
 # What the Whisper turbo wrote when the owner said "Jarvis" low or "para dentro" (2026-10-21 real test). They count as his
 # name ONLY when they are the whole utterance: inside a sentence ("Jens me mandou...") they are ordinary words.
-_ALONE_VARIANTS = ("jams", "jerms", "jabs", "jens", "germs", "germes", "gervis", "gevis", "jeves", "jarms", "jarvs", "j'ai a vis", "ja avis", "ja vis")
+_ALONE_VARIANTS = ("gavis", "jams", "jerms", "jabs", "jens", "germs", "germes", "gervis", "gevis", "jeves", "jarms", "jarvs", "j'ai a vis", "ja avis", "ja vis")
 _NAME_ALONE = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa)\W+)?(?:(?:" + "|".join(_ALONE_VARIANTS) + r")\W*)+$")
 
 
@@ -252,10 +252,12 @@ class Conversation:
     def __init__(self, frames: Callable[[], np.ndarray | None], vad, gate: SpeechGate, player: Player,
                  transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
                  ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print,
-                 follow_up_s: float = FOLLOW_UP_S) -> None:
+                 follow_up_s: float = FOLLOW_UP_S, standby: bool = False) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
         self._transcribe, self._start_speech, self._say, self._ack = transcribe, start_speech, say, ack
         self._clock, self._idle_s, self._log, self._follow_up_s = clock, idle_s, log, follow_up_s
+        self._standby = standby       # no Enter: the loop never ends, it falls back to "closed" and waits for his name
+        self._closed = standby        # closed = nothing is answered until something said starts with his name
         self._open_until = 0.0        # until when he can talk without calling the Jarvis (the follow-up window)
         self._utterance_start = 0.0
         self.out_of_window = 0        # sentences ignored for lacking his name once the window had closed
@@ -278,6 +280,21 @@ class Conversation:
         self._extended = False        # the extra wait is used at most once per sentence
         self.early_hits = 0           # times the early transcription was reused
         self.holds = 0                # times the extra wait happened
+
+    def _close(self) -> None:
+        """Standby only: the conversation is over ("tchau" or silence); from now on only his name opens it again."""
+        self._closed, self._open_until = True, 0.0
+        self._recording, self._spec, self._holding = None, None, False
+        self._log("  (conversa fechada: chame 'Jarvis' pra abrir)")
+
+    def _wake(self, audio: np.ndarray) -> bool:
+        """Closed: is what was just said a call? The cheap check, no vocabulary prompt (it would echo the name back)."""
+        if not has_name(self._transcribe(audio, quick=True)):
+            return False
+        self._closed = False
+        self._open_window()  # the 1st sentence is the call itself, the next ones need no name for a while
+        self._log("  (chamado: conversa aberta)")
+        return True
 
     def _speaking(self) -> bool:
         return self._speech is not None and (self._speech.generating or self._player.busy)
@@ -391,14 +408,18 @@ class Conversation:
 
     def run(self) -> None:
         last_activity = self._clock()
-        self._open_window()  # he pressed Enter to talk: the first sentence needs no name
+        if not self._closed:
+            self._open_window()  # he pressed Enter to talk: the first sentence needs no name
         while True:
             frame = self._frames()
             now = self._clock()
-            if frame is None:
-                if not self._speaking() and self._recording is None and now - last_activity > self._idle_s:
+            if not self._closed and not self._speaking() and self._recording is None and now - last_activity > self._idle_s:
+                if not self._standby:  # checked every frame: the microphone keeps delivering them, `None` is only a stalled queue
                     self._log("  (silêncio: encerrando o modo conversa)")
                     return
+                self._close()
+                last_activity = now
+            if frame is None:
                 continue
             if self._speech is not None and not self._speaking():
                 self._commit_answer()
@@ -433,12 +454,18 @@ class Conversation:
                     text, self._holding = self._held_text, False
                     self._recording, self._spec = None, None
                     if not self._turn(text):
-                        return
+                        if not self._standby:
+                            return
+                        self._close()
                     last_activity = self._clock()
             elif event == "end" and self._recording is not None:
                 frames, self._recording = self._recording, None
                 audio = np.concatenate(frames)
                 self._gate.reset()
+                if self._closed and not self._wake(audio):
+                    self._spec = None
+                    last_activity = self._clock()
+                    continue
                 if (not self._checking and not self._extended and not self._holding):
                     heard = self._heard(audio)
                     if self._utterance_start > self._open_until and not has_name(heard):
@@ -454,9 +481,13 @@ class Conversation:
                         self._log("  (parece que o senhor ainda vai continuar: espero um pouco)")
                         continue
                     if not self._turn(heard):
-                        return
+                        if not self._standby:
+                            return
+                        self._close()
                 elif not self._finish(audio):
-                    return
+                    if not self._standby:
+                        return
+                    self._close()
                 last_activity = self._clock()
             if (self._recording is not None and self._checking and not self._named
                     and len(self._recording) * FRAME_S >= self._next_check):
@@ -465,7 +496,7 @@ class Conversation:
                 else:  # he stopped talking while the voice went on: nothing to protect any more
                     self._player.set_volume(1.0)
                     self._checking = False
-            if (self._recording is not None and not self._checking and not self._holding and self._gate.active
+            if (self._recording is not None and not self._closed and not self._checking and not self._holding and self._gate.active
                     and self._gate.quiet_s >= SPEC_S
                     and (self._spec is None or self._spec["voiced"] != self._voiced)):
                 self._start_early()

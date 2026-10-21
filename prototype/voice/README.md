@@ -37,6 +37,10 @@ C:\Users\felip\jarvis-voice-venv\Scripts\python.exe bench_stt.py
 ```
 Do WSL: `powershell.exe -NoProfile -Command "& 'C:\Users\felip\jarvis-voice-venv\Scripts\python.exe' bench_tts.py"`. Os WAVs saem em `C:\Users\felip\jarvis-voice-out`.
 
+## Etapa 3: abrir a conversa só falando "Jarvis" (`talk.py --standby`, 2026-10-21)
+
+Sem Enter: o microfone fica aberto e, com a conversa **fechada**, tudo que é dito só passa por uma checagem barata do Whisper (sem prompt de vocabulário, no máximo 24 tokens, tudo local); sem o nome, é descartado em silêncio. Com o nome ("Jarvis, que horas são?"), a conversa abre e a mesma frase já é o pedido (o pre-roll de 1 s do VAD guarda o começo da palavra). "Tchau" ou 20 s de silêncio **fecham** a conversa e ela volta a esperar o nome, em vez de encerrar o programa. O detector é o Whisper turbo + variantes do nome (ver `has_name`); openWakeWord e Porcupine foram avaliados e descartados (nó do Jarvis no Mind).
+
 ## Etapa 2: conversa com interrupção pelo nome (`talk.py`, 2026-10-20)
 
 Microfone **sempre aberto**: o Jarvis fala e você pode cortá-lo, **mas só chamando "Jarvis"** (como a Alexa). Sem framework (só `sounddevice`); a detecção de voz é o **Silero VAD que já vem dentro do `faster-whisper`**, quadro a quadro (`duplex.py`, com testes em `test_duplex.py`).
@@ -45,6 +49,7 @@ Microfone **sempre aberto**: o Jarvis fala e você pode cortá-lo, **mas só cha
 cd \\wsl.localhost\Ubuntu\home\felip\projetos\jarvis\prototype\voice
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py            # Enter abre a conversa; fale; "tchau" encerra
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py --list     # lista os dispositivos de áudio
+C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py --standby  # etapa 3: sem Enter; "Jarvis" abre a conversa (Ctrl+C sai)
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py --out Realtek   # escolhe a saída por parte do nome
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py --simulate  # sem microfone: vozes sintéticas provam a interrupção
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe -m unittest test_duplex
