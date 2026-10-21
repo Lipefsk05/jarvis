@@ -37,9 +37,9 @@ C:\Users\felip\jarvis-voice-venv\Scripts\python.exe bench_stt.py
 ```
 Do WSL: `powershell.exe -NoProfile -Command "& 'C:\Users\felip\jarvis-voice-venv\Scripts\python.exe' bench_tts.py"`. Os WAVs saem em `C:\Users\felip\jarvis-voice-out`.
 
-## Etapa 2: conversa com interrupção (`talk.py`, 2026-10-20)
+## Etapa 2: conversa com interrupção pelo nome (`talk.py`, 2026-10-20)
 
-Microfone **sempre aberto**: o Jarvis fala e você pode falar por cima dele. Sem framework (só `sounddevice`); a detecção de voz é o **Silero VAD que já vem dentro do `faster-whisper`**, quadro a quadro (`duplex.py`, com testes em `test_duplex.py`).
+Microfone **sempre aberto**: o Jarvis fala e você pode cortá-lo, **mas só chamando "Jarvis"** (como a Alexa). Sem framework (só `sounddevice`); a detecção de voz é o **Silero VAD que já vem dentro do `faster-whisper`**, quadro a quadro (`duplex.py`, com testes em `test_duplex.py`).
 
 ```powershell
 cd \\wsl.localhost\Ubuntu\home\felip\projetos\jarvis\prototype\voice
@@ -50,11 +50,13 @@ C:\Users\felip\jarvis-voice-venv\Scripts\python.exe talk.py --simulate  # sem mi
 C:\Users\felip\jarvis-voice-venv\Scripts\python.exe -m unittest test_duplex
 ```
 
-- **Use fone, de preferência por cabo**: com caixa de som o microfone ouve o Jarvis e ele se interrompe sozinho; no Bluetooth a saída atrasa 150-250 ms. O microfone é o USB (Logitech); o fone só toca.
-- **Interromper** exige ~0,4 s de voz contínua (`BARGE_IN_S`), pra um "aham" ou uma tosse não cortar a fala; começar uma frase com o Jarvis calado exige 0,2 s (`START_S`); a frase termina após 0,7 s de silêncio (`SILENCE_S`). Tudo em `duplex.py`.
-- Ao ser cortado o Jarvis **para na hora** (esvazia o buffer de saída, cancela o modelo e a voz) e **não retoma**; no histórico fica só o que ele chegou a dizer, marcado "[o senhor interrompeu]". O que você falou por cima vira o próximo turno.
-- Fim da conversa: "tchau" / "até logo" / "encerra", ou 20 s de silêncio (`--idle`).
-- Medido na simulação: a fala por cima começou em 15,0 s e a do Jarvis foi cortada em 15,6 s (0,4 s de limite + atraso do quadro).
+- **Conversa aberta (Enter), o Jarvis calado**: você fala sem precisar do nome; ele responde cada frase. Fecha com "tchau" / "até logo" / "encerra" ou 20 s de silêncio (`--idle`).
+- **Enquanto ele fala, só o nome corta** (decisão do Felipe, 2026-10-20: evita interrupção por erro). Uma voz com 0,4 s seguidos (`BARGE_IN_S`) só **dispara uma checagem**: o volume dele **abaixa pra 25%** (`DUCK`) e o Whisper transcreve o trecho (~0,6 s). Se tiver "Jarvis" (aceita "Jarves", "já vis" etc.), **para na hora** (esvazia o buffer, cancela modelo e voz), **não retoma**, e o resto da frase vira o próximo turno ("Jarvis, me fala só do Supabase" executa "me fala só do Supabase"; "Jarvis" sozinho só corta e espera a próxima frase). Se não tiver, o volume volta e ele continua. Conversa de fundo, tosse e "aham" não cortam.
+- Se ele termina de falar sozinho enquanto você falava, o que você disse vira um turno normal (sem exigir o nome).
+- No histórico fica só o que ele chegou a dizer, marcado "[o senhor interrompeu]".
+- **Lições do teste simulado (3 rodadas iguais):** (1) a checagem **não pode usar o prompt de vocabulário do Whisper**: num trecho com pouca fala ele devolveu o prompt inteiro ("Jarvis, Dindin, Firebase..."), o que "ouviria" o nome no silêncio (corte falso); sem prompt, saiu "Jarvis" limpo. (2) a checagem tem **saída limitada a 24 tokens**: uma vez uma transcrição ilimitada levou 6 s enquanto ele continuava falando. Tempo medido: do início da sua fala ao corte, ~1,4-1,5 s; fala sem o nome, ignorada nas 3 rodadas.
+- **Use fone, de preferência por cabo**: o nome também protege contra o eco da caixa de som (ele quase não diz o próprio nome), mas o fone é o certo; no Bluetooth a saída atrasa 150-250 ms. O microfone é o USB (Logitech); o fone só toca.
+- **Ainda não faz (etapa 3):** abrir a conversa pelo nome sem apertar Enter (wake word com pre-roll), e um detector dedicado de palavra (openWakeWord) mais rápido que a checagem pelo Whisper.
 
 ## Voz do Google (Chirp 3 HD) — NÃO adotado, possível mudança futura (2026-10-15)
 **Situação:** ao ativar o teste grátis (US$ 300, 90 dias), o cartão Elo do Felipe exigiu um **pré-pagamento único de R$ 150**, reembolsável se fechar a conta de faturamento (prazo e regras não vistos; ler o link "Learn more about payment methods" da tela). Ele parou e manteve o Edge-TTS. O projeto `jarvis-voz-511802` existe, sem faturamento. Quando retomar, decidir os R$ 150 (conta pré-paga só gasta o saldo, uma trava natural) ou tentar outro cartão; sem conta de faturamento a API não funciona.

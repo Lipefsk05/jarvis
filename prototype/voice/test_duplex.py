@@ -73,6 +73,20 @@ class ExitTest(unittest.TestCase):
             self.assertFalse(d.is_exit(text), text)
 
 
+class NameTest(unittest.TestCase):
+    def test_the_name_in_the_ways_whisper_writes_it(self):
+        for text in ("Jarvis", "jarvis, para", "Ei Jarvis!", "Jarves, espera", "já vis", "Pera aí, Jarvis"):
+            self.assertTrue(d.has_name(text), text)
+        for text in ("aham", "quanto custa o dólar", "o servidor caiu", ""):
+            self.assertFalse(d.has_name(text), text)
+
+    def test_the_call_is_cut_from_the_start_of_the_sentence(self):
+        self.assertEqual(d.strip_name("Jarvis, me fala só do Supabase."), "me fala só do Supabase")
+        self.assertEqual(d.strip_name("Ei, Jarvis: pera aí"), "pera aí")
+        self.assertEqual(d.strip_name("Jarvis"), "")
+        self.assertEqual(d.strip_name("me fala do Jarvis amanhã"), "me fala do Jarvis amanhã")  # not at the start: untouched
+
+
 class FakeVad:
     """Reads a marker the test puts in each frame: 1.0 = voice, 0.0 = quiet."""
     def prob(self, frame): return float(frame[0])
@@ -82,27 +96,33 @@ def voice(): return np.ones(d.FRAME, dtype=np.float32)
 def quiet(): return np.zeros(d.FRAME, dtype=np.float32)
 
 
+def seconds_of(frame, seconds): return [frame()] * int(seconds / d.FRAME_S)
+
+
 class ConversationTest(unittest.TestCase):
-    def build(self, script, speak_frames=0):
-        """`script` is a list of frames; the conversation reads them one by one and stops when they run out."""
+    def build(self, script, hook=None):
+        """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
+        `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
-        self.said, self.started = [], []
+        self.said, self.started, self.logs, self.count = [], [], [], 0
         self.player = d.Player(open_stream=lambda rate, cb, dev: FakeStream())
-        self.logs = []
 
         def next_frame():
+            self.count += 1
+            if hook:
+                hook(self.count, self.player)
             try:
                 return next(frames)
             except StopIteration:
                 raise SystemExit
 
-        def transcribe(audio):
+        def transcribe(audio, quick=False):
             return self.heard.pop(0)
 
         def start_speech(heard, history, speech, player):
             self.started.append(heard)
             speech.sentences.append(f"resposta a {heard}")
-            player.enqueue(0, np.ones(24000, dtype=np.float32), 24000)  # 1 s of audio, never pulled unless the test does
+            player.enqueue(0, np.ones(24000, dtype=np.float32), 24000)  # 1 s of audio, only played when a test pulls it
             speech.generating = False
 
         self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
@@ -115,47 +135,94 @@ class ConversationTest(unittest.TestCase):
             pass
 
     def sentence(self, seconds=0.5):
-        return [voice()] * int(seconds / d.FRAME_S) + [quiet()] * (int(d.SILENCE_S / d.FRAME_S) + 2)
+        return seconds_of(voice, seconds) + seconds_of(quiet, d.SILENCE_S + 0.1)
 
-    def test_a_spoken_sentence_is_answered(self):
+    def answer_started(self):
+        """A hook: once the first answer exists, the sound card pulls a little of it, so it counts as heard."""
+        def hook(n, player):
+            if n == len(self.first_turn) + 2:
+                player._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+        return hook
+
+    def over(self, seconds):
+        return seconds_of(quiet, 0.1) + seconds_of(voice, seconds) + seconds_of(quiet, d.SILENCE_S + 0.1)
+
+    def test_a_spoken_sentence_is_answered_without_calling_him(self):
         self.heard = ["bom dia"]
         self.build(self.sentence())
         self.run_conv()
         self.assertEqual(self.started, ["bom dia"])
         self.assertEqual(self.conv.history, [{"role": "user", "content": "bom dia"}])
 
-    def test_talking_over_the_answer_cuts_it_and_starts_a_new_turn(self):
-        self.heard = ["primeira", "segunda"]
-        script = self.sentence()
-        # the answer is playing (1 s queued): pull a little so the sentence counts as heard, then the owner talks over it
-        self.build(script + [quiet()] * 3 + [voice()] * int(0.6 / d.FRAME_S) + [quiet()] * (int(d.SILENCE_S / d.FRAME_S) + 2))
-        original = self.conv._frames
-        count = {"n": 0}
-
-        def frames():
-            count["n"] += 1
-            if count["n"] == len(script) + 1:  # right after the first turn started: the player pulls some audio
-                self.player._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
-            return original()
-
-        self.conv._frames = frames
+    def test_calling_his_name_over_the_answer_cuts_it_and_the_rest_is_the_next_turn(self):
+        self.heard = ["primeira", "jarvis, me fala", "Jarvis, me fala só do Supabase"]
+        self.first_turn = self.sentence()
+        self.build(self.first_turn + self.over(2.0), hook=self.answer_started())
         self.run_conv()
-        self.assertEqual(self.started, ["primeira", "segunda"])
+        self.assertEqual(self.started, ["primeira", "me fala só do Supabase"])
         self.assertEqual(self.conv.interruptions, 1)
         self.assertEqual(self.conv.history[1], {"role": "assistant", "content": "resposta a primeira [o senhor interrompeu]"})
-        self.assertEqual(self.conv.history[2], {"role": "user", "content": "segunda"})
+        self.assertEqual(self.conv.history[2], {"role": "user", "content": "me fala só do Supabase"})
 
-    def test_a_short_noise_while_speaking_does_not_cut(self):
-        self.heard = ["primeira"]
-        script = self.sentence() + [voice()] * 3 + [quiet()] * 20  # ~0.1 s of voice over the answer
-        self.build(script)
+    def test_a_voice_that_does_not_call_him_is_ignored_and_he_goes_on(self):
+        self.heard = ["primeira", "pera aí, deixa eu ver", "pera aí, deixa eu ver uma coisa", "pera aí, deixa eu ver uma coisa aqui"]
+        self.first_turn = self.sentence()
+        self.build(self.first_turn + self.over(3.0), hook=self.answer_started())
         self.run_conv()
+        self.assertEqual(self.started, ["primeira"])
         self.assertEqual(self.conv.interruptions, 0)
+        self.assertEqual(self.conv.ignored, 1)
         self.assertTrue(self.player.busy)
+        self.assertEqual(self.player._volume, 1.0)  # his volume came back
+
+    def test_his_volume_is_lowered_while_checking(self):
+        self.heard = ["primeira", "não é comigo", "não é comigo, não", "não é comigo, não"]
+        self.first_turn = self.sentence()
+        seen = []
+        hook = self.answer_started()
+
+        def spy(n, player):
+            hook(n, player)
+            seen.append(player._volume)
+
+        self.build(self.first_turn + self.over(1.6), hook=spy)
+        self.run_conv()
+        self.assertIn(d.DUCK, seen)
+        self.assertEqual(seen[-1], 1.0)
+
+    def test_a_short_blip_over_him_is_not_even_checked(self):
+        self.heard = ["primeira"]  # a second transcription would raise IndexError
+        self.first_turn = self.sentence()
+        self.build(self.first_turn + seconds_of(voice, 0.1) + seconds_of(quiet, 1.0), hook=self.answer_started())
+        self.run_conv()
+        self.assertEqual((self.conv.interruptions, self.conv.ignored), (0, 0))
+
+    def test_only_his_name_cuts_and_waits_for_the_next_sentence(self):
+        self.heard = ["primeira", "Jarvis", "Jarvis"]
+        self.first_turn = self.sentence()
+        self.build(self.first_turn + self.over(1.3), hook=self.answer_started())
+        self.run_conv()
+        self.assertEqual(self.started, ["primeira"])
+        self.assertEqual(self.conv.interruptions, 1)
+
+    def test_if_he_finishes_by_himself_the_voice_over_him_is_a_normal_turn(self):
+        self.heard = ["primeira", "e o supabase?"]
+        self.first_turn = self.sentence()
+        hook = self.answer_started()
+
+        def finishing(n, player):
+            hook(n, player)
+            if n == len(self.first_turn) + 12:  # while the owner talks: the sound card plays what is left
+                player._callback(np.zeros((24000, 1), dtype=np.float32), 24000, None, None)
+
+        self.build(self.first_turn + self.over(1.6), hook=finishing)
+        self.run_conv()
+        self.assertEqual(self.started, ["primeira", "e o supabase?"])
+        self.assertEqual(self.conv.interruptions, 0)
 
     def test_the_exit_phrase_says_goodbye_and_ends(self):
         self.heard = ["tchau"]
-        self.build(self.sentence() + [quiet()] * 5)
+        self.build(self.sentence() + seconds_of(quiet, 0.2))
         self.run_conv()
         self.assertEqual(self.said, ["Até logo, senhor."])
         self.assertEqual(self.started, [])

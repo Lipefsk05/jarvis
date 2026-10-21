@@ -2,9 +2,9 @@
 
     microphone (always open) -> Silero VAD -> faster-whisper (GPU) -> Groq (persona/jarvis.md) -> Edge-TTS -> speaker
 
-Enter opens the conversation; then just talk. Talking over the Jarvis (about 0.4 s of voice) cuts his speech at once
-and what you say becomes the next turn. "Tchau" (or 20 s of silence) ends it. Use headphones: with speakers the
-microphone hears the Jarvis and he interrupts himself.
+Enter opens the conversation; then just talk (no need to call him). While he is speaking, only calling him cuts him:
+say "Jarvis" (or "Jarvis, ..." with the new request) and he stops at once; anything else said over him only lowers his
+volume for a moment and he goes on. "Tchau" (or 20 s of silence) ends it. Use headphones.
 
 Run in the Windows venv:
     python talk.py                          Logitech microphone, default output
@@ -26,7 +26,7 @@ import sounddevice as sd
 import soundfile as sf
 
 from common import add_cuda_dlls, read_env
-from duplex import BARGE_IN_S, FRAME, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
+from duplex import FRAME, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
 from turn_loop import SRC, VOICE, VOICE_RULES, clean, cut, load, load_template, pick_mic, polish, render, stream_groq
 from turn_loop import for_speech, is_greeting, starts_with_greeting
 
@@ -61,8 +61,9 @@ def synth_owner(text: str) -> np.ndarray:
 def simulate(conversation: Conversation, blocks: queue.Queue, player: Player, stamp) -> None:
     """Script: ask something long, wait until the Jarvis is talking, talk over him, then say goodbye."""
     first = synth_owner("Jarvis, me explica em detalhes como funciona o Firebase, com todos os produtos.")
-    second = synth_owner("Pera aí, na verdade me fala só do Supabase.")
-    bye = synth_owner("Tchau, Jarvis.")
+    distractor = synth_owner("Pera aí, deixa eu ver uma coisa aqui, só um minuto.")
+    named = synth_owner("Jarvis, na verdade me fala só do Supabase.")
+    bye = synth_owner("Jarvis, tchau.")
     def feed(audio: np.ndarray) -> None:
         for i in range(0, len(audio) - FRAME + 1, FRAME):
             blocks.put(audio[i:i + FRAME])
@@ -79,19 +80,22 @@ def simulate(conversation: Conversation, blocks: queue.Queue, player: Player, st
         while not player.heard():  # the Jarvis has not started to talk yet
             silence(0.1)
         silence(1.5)  # let him talk a little
-        stamp("DONO: começa a falar por cima")
-        feed(second)
+        stamp("DONO: fala por cima SEM chamar o Jarvis (deve ser ignorado)")
+        feed(distractor)
+        silence(2.0)
+        stamp("DONO: chama 'Jarvis' por cima (deve cortar)")
+        feed(named)
         silence(1.0)
         while not player.heard():
             silence(0.1)
         silence(2.5)
-        stamp("DONO: diz tchau")
+        stamp("DONO: 'Jarvis, tchau' (corta e encerra)")
         feed(bye)
         silence(3.0)
 
     threading.Thread(target=owner, daemon=True).start()
     conversation.run()
-    print(f"interrupções: {conversation.interruptions}")
+    print(f"interrupções: {conversation.interruptions} | vozes ignoradas: {conversation.ignored}")
     for message in conversation.history:
         print(f"  {message['role']}: {message['content'][:160]}")
 
@@ -145,12 +149,19 @@ def main() -> None:
     def stamp(message: str) -> None:
         print(f"[{time.perf_counter() - t_zero:5.1f}s] {message}" if simulated else message)
 
-    def transcribe(audio: np.ndarray) -> str:
+    def transcribe(audio: np.ndarray, quick: bool = False) -> str:
+        """`quick` is the "was that his name?" check: a few words are enough, so the output is capped (an unbounded
+        decode of an odd chunk once took 6 s while he kept talking)."""
         started = time.perf_counter()
+        # No vocabulary prompt in the check: on a chunk with little speech Whisper repeats the prompt back, and a prompt
+        # that contains "Jarvis" would then "hear" his name in silence (a false interruption).
+        extra = ({"max_new_tokens": 24, "without_timestamps": True} if quick
+                 else {"initial_prompt": "Jarvis, Dindin, Firebase, Mind, Groq, Telegram."})
         segments, _ = whisper.transcribe(audio, language="pt", beam_size=1, vad_filter=False,
-                                         initial_prompt="Jarvis, Dindin, Firebase, Mind, Groq, Telegram.")
+                                         condition_on_previous_text=False, **extra)
         text = " ".join(s.text.strip() for s in segments)
-        print(f"  [Whisper {time.perf_counter() - started:.2f} s]")
+        print(f"  [Whisper{' (checagem)' if quick else ''} {time.perf_counter() - started:.2f} s, {len(audio) / RATE:.1f} s de áudio]"
+              + (f" «{text}»" if quick else ""))
         return text
 
     # --- thinking and speaking, cancellable ---------------------------------------------------------------
@@ -269,7 +280,7 @@ def main() -> None:
     while True:
         if input("\nEnter para abrir a conversa (q + Enter sai): ").strip().lower() == "q":
             break
-        print(f"  (ouvindo; interrompa falando por ~{BARGE_IN_S:.1f} s; diga 'tchau' ou fique {args.idle:.0f} s em silêncio pra encerrar)")
+        print(f"  (ouvindo; pra interromper o Jarvis, chame 'Jarvis'; diga 'tchau' ou fique {args.idle:.0f} s em silêncio pra encerrar)")
         vad.reset()
         while not blocks.empty():
             blocks.get_nowait()

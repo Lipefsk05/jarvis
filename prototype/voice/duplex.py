@@ -1,5 +1,6 @@
-"""Stage 2 building blocks: listening while the Jarvis talks, so the owner can interrupt. No devices in here
-(the microphone and the speaker are passed in), so the logic runs in tests.
+"""Stage 2 building blocks: listening while the Jarvis talks, so the owner can interrupt, but only by calling him:
+"Jarvis" (like "Alexa") cuts the speech; anything else said over him is ignored and he keeps talking. No devices in
+here (the microphone and the speaker are passed in), so the logic runs in tests.
 
     SpeechGate    frame probabilities -> "start" / "end" of a sentence (with a longer bar while the Jarvis speaks)
     StreamingVad  Silero VAD, one 32 ms frame at a time (the model that ships inside faster-whisper)
@@ -25,7 +26,11 @@ PRE_ROLL_S = 1.0                 # audio kept from before the "start" event, so 
 MAX_SENTENCE_S = 30.0
 
 START_S = 0.20                   # voice needed to start a sentence when the Jarvis is quiet
-BARGE_IN_S = 0.40                # voice needed to cut the Jarvis: a short "aham" or a cough must not do it
+BARGE_IN_S = 0.40                # voice needed, while he talks, to even check for his name: a cough or "aham" is ignored
+CHECK_FIRST_S = 1.2              # seconds of recording at which the first "was it his name?" check happens
+CHECK_EVERY_S = 1.5              # and again every this many seconds while the voice goes on
+MAX_CHECKS = 3
+DUCK = 0.25                      # his volume while checking, so he does not talk full blast over the owner
 SILENCE_S = 0.70                 # quiet that ends the sentence
 IDLE_S = 20.0                    # no one talking for this long ends the conversation mode
 
@@ -34,6 +39,26 @@ EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:tchau|ate logo|ate mais|encerra\
 
 def fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
+
+
+_NAME = re.compile(r"\b(?:jarvis|jarves|jarvi|jarviz|jarvez|jarbis|jarvice|javis|garvis|charvis|harvis|jervis|ja vis|ja ves|ja vi)\b")
+_NAME_AT_START = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa|pera|peraí|pera ai|espera|calma)\W+)*(?:" + _NAME.pattern[2:-2] + r")\W*")
+
+
+def has_name(text: str) -> bool:
+    """Did the owner call him? Tolerant of how Whisper spells it."""
+    return bool(_NAME.search(fold(text)))
+
+
+def strip_name(text: str) -> str:
+    """The sentence without the call at its start ("Jarvis, me fala do Supabase" -> "me fala do Supabase")."""
+    folded = fold(text)
+    match = _NAME_AT_START.match(folded)
+    if match is None:
+        return text.strip()
+    # fold() keeps the length of ASCII text and only drops combining marks, so cut the original at the same word count
+    words_removed = len(folded[:match.end()].split())
+    return " ".join(text.split()[words_removed:]).strip(" ,.:;-!?")
 
 
 def is_exit(text: str) -> bool:
@@ -99,6 +124,7 @@ class Player:
         self._chunks: collections.deque = collections.deque()  # [sentence id, samples, offset]
         self._started: list[int] = []
         self._stream = None
+        self._volume = 1.0
         self.rate = 0
 
     def _open_sounddevice(self, rate: int, callback, device):
@@ -131,7 +157,10 @@ class Player:
                 chunk[2] += take
                 if chunk[2] >= len(chunk[1]):
                     self._chunks.popleft()
-        outdata[:, 0] = out
+        outdata[:, 0] = out * self._volume
+
+    def set_volume(self, volume: float) -> None:
+        self._volume = max(0.0, min(1.0, volume))
 
     @property
     def busy(self) -> bool:
@@ -169,10 +198,14 @@ class Speech:
 class Conversation:
     """The hands-free loop. `frames` yields 32 ms microphone frames (or None on a timeout tick); `transcribe` turns
     audio into text; `start_speech(heard, history, speech, player)` thinks and speaks in background threads, filling
-    `speech.sentences`, putting each sentence's audio in the player and setting `speech.generating` to False at the end."""
+    `speech.sentences`, putting each sentence's audio in the player and setting `speech.generating` to False at the end.
+
+    While the conversation is open the owner talks without calling him. Only while he is speaking does a voice need to
+    say his name: the voice ducks his volume, a short transcription checks for the name, and the speech is cut if it is
+    there; otherwise the volume comes back and he goes on."""
 
     def __init__(self, frames: Callable[[], np.ndarray | None], vad, gate: SpeechGate, player: Player,
-                 transcribe: Callable[[np.ndarray], str], start_speech: Callable, say: Callable[[str], None] | None = None,
+                 transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
                  clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
         self._transcribe, self._start_speech, self._say = transcribe, start_speech, say
@@ -181,7 +214,12 @@ class Conversation:
         self._ring: collections.deque = collections.deque(maxlen=int(PRE_ROLL_S / FRAME_S))
         self._recording: list[np.ndarray] | None = None
         self._speech: Speech | None = None
+        self._checking = False        # a voice started over the Jarvis and has not been identified yet
+        self._named = False           # ...and it called him
+        self._checks = 0
+        self._next_check = CHECK_FIRST_S
         self.interruptions = 0
+        self.ignored = 0              # voices over him that did not call him
 
     def _speaking(self) -> bool:
         return self._speech is not None and (self._speech.generating or self._player.busy)
@@ -203,15 +241,34 @@ class Conversation:
         if self._speech is not None:
             self._speech.cancelled.set()
         self._player.stop()
+        self._player.set_volume(1.0)
         self._commit_answer()
         self.interruptions += 1
+        self._named = True
         self._log("  (interrompido)")
 
-    def _turn(self, audio: np.ndarray) -> bool:
-        """Transcribe what the owner said and answer it. False when he asked to end the conversation."""
-        heard = self._transcribe(audio).strip()
+    def _drop_check(self) -> None:
+        """The voice over him did not call him: forget it and give him back his volume."""
+        self._recording, self._checking, self._named = None, False, False
+        self._player.set_volume(1.0)
+        self.ignored += 1
+        self._log("  (voz sem o meu nome: ignorada)")
+
+    def _check_name(self) -> None:
+        self._checks += 1
+        text = self._transcribe(np.concatenate(self._recording), quick=True)
+        if has_name(text):
+            self._cut()
+        elif self._checks >= MAX_CHECKS:
+            self._drop_check()
+        else:
+            self._next_check += CHECK_EVERY_S
+
+    def _turn(self, heard: str) -> bool:
+        """Answer what the owner said. False when he asked to end the conversation."""
+        heard = strip_name(heard) if has_name(heard) else heard.strip()
         if len(heard) < 2:
-            return True
+            return True  # he only called ("Jarvis"): the next sentence is the turn
         self._log(f"  você: {heard}")
         if is_exit(heard):
             if self._say:
@@ -222,6 +279,23 @@ class Conversation:
         self._speech = Speech()
         self._start_speech(heard, self.history[-12:], self._speech, self._player)
         return True
+
+    def _finish(self, audio: np.ndarray) -> bool:
+        """The owner stopped talking. Returns False to end the conversation."""
+        checking, named = self._checking, self._named
+        self._checking, self._named = False, False
+        heard = self._transcribe(audio).strip()
+        if checking and not named:
+            if self._speaking():
+                if not has_name(heard):  # he talked over, never called him: ignored
+                    self._player.set_volume(1.0)
+                    self.ignored += 1
+                    self._log("  (voz sem o meu nome: ignorada)")
+                    return True
+                self._cut()
+            else:
+                self._player.set_volume(1.0)  # he finished meanwhile: the open conversation takes it as a turn
+        return self._turn(heard)
 
     def run(self) -> None:
         last_activity = self._clock()
@@ -246,12 +320,20 @@ class Conversation:
             if self._gate.active or speaking:
                 last_activity = now
             if event == "start":
-                if speaking:
-                    self._cut()
                 self._recording = list(self._ring)
+                if speaking:
+                    self._checking, self._named, self._checks, self._next_check = True, False, 0, CHECK_FIRST_S
+                    self._player.set_volume(DUCK)
             elif event == "end" and self._recording is not None:
                 audio, self._recording = np.concatenate(self._recording), None
                 self._gate.reset()
-                if not self._turn(audio):
+                if not self._finish(audio):
                     return
                 last_activity = self._clock()
+            if (self._recording is not None and self._checking and not self._named
+                    and len(self._recording) * FRAME_S >= self._next_check):
+                if self._speaking():
+                    self._check_name()
+                else:  # he stopped talking while the voice went on: nothing to protect any more
+                    self._player.set_volume(1.0)
+                    self._checking = False
