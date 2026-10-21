@@ -40,6 +40,25 @@ class ParseActionTest(unittest.TestCase):
         self.assertEqual(len(parse_action(ToolCall("consultar_tarefas", {"area": "y" * 500})).area), MAX_AREA_CHARS)
 
 
+class LiveQuestionTest(unittest.TestCase):
+    def test_a_question_about_live_public_data_is_a_request_for_the_internet(self):
+        from jarvis.commands import has_intent, is_live_question
+        for said in ("Qual a cotação do dólar atual?", "quanto está o bitcoin", "Quem ganhou o jogo ontem?",
+                     "como está o clima em Recife agora?", "quanto custa um iPhone 16?", "o que aconteceu hoje no mundo?",
+                     "Jarvis, qual o preço da gasolina?"):
+            self.assertTrue(is_live_question(said), said)
+            self.assertTrue(has_intent("delegar_trabalho", said), said)
+
+    def test_questions_about_his_own_things_or_general_knowledge_are_not(self):
+        from jarvis.commands import has_intent, is_live_question
+        for said in ("Como está meu dia hoje?", "o que tenho na agenda amanhã?", "quais minhas tarefas pendentes?",
+                     "Qual a capital da Austrália?", "me explica o que é DNS", "o dólar subiu", "preciso pagar o aluguel agora",
+                     "no Mind, qual o preço da proposta do Pedro?"):
+            self.assertFalse(is_live_question(said), said)
+        self.assertFalse(has_intent("delegar_trabalho", "Qual a capital da Austrália?"))
+        self.assertTrue(has_intent("delegar_trabalho", "pesquisa o preço do dólar"))  # the verbs still work
+
+
 if __name__ == "__main__":
     unittest.main()
 

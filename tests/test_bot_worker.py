@@ -25,6 +25,12 @@ class BotWorkerTest(_BotCase):
         self.assertNotIn("Forge", reply)  # the request is not echoed back
         self.assertIn("pesquisa no Mind tudo sobre o Forge", self.send("on_jobs", "/pedidos"))
 
+    def test_a_question_about_live_data_goes_to_the_internet_without_a_verb_and_without_asking(self):
+        for text in ("Qual a cotação do dólar atual?", "quem ganhou o jogo ontem?"):
+            reply = self.send("on_text", text)
+            self.assertNotIn("Mind ou", reply)
+            self.assertNotIn("não tenho certeza", reply.lower())
+
     def test_without_the_place_it_asks_and_the_answer_decides(self):
         self.assertIn("No Mind ou por fora", self.send("on_text", "levanta as decisões sobre o domínio"))
         self.assertIn(self.send("on_text", "no mind"), research.ACKS)

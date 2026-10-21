@@ -33,7 +33,7 @@ from .task_calendar import TaskCalendar, safe_sync
 from .assistant import Assistant
 from .audio import GroqTranscriber, TranscribeError, check_audio, transcript_line
 from .budget import Budget
-from .commands import asks_capabilities, parse_note_request, parse_work_request, parse_reminder_request, parse_event_request, task_query_words, wants_agenda, wants_tasks
+from .commands import asks_capabilities, is_live_question, parse_note_request, parse_work_request, parse_reminder_request, parse_event_request, task_query_words, wants_agenda, wants_tasks
 from .help import format_help, menu
 from .config import Settings
 from .conversation import History
@@ -366,6 +366,9 @@ def build_application(settings: Settings) -> Application:
         if work is not None:  # "pesquisa ... X": the verb is the request (no model), and the owner picks where to look
             await start_research(message, chat_id, work)
             return
+        if is_live_question(text):  # "qual a cotação do dólar?": only a lookup answers it; no model that could invent a number
+            await start_research(message, chat_id, text.strip(), text)
+            return
         if wants_tasks(text):  # same readable answer as /tarefas, no model call
             await reply_tasks(message, task_query_words(text))
             return
@@ -563,6 +566,8 @@ def build_application(settings: Settings) -> Application:
     async def start_research(message, chat_id: int, request: str, user_text: str = "") -> None:
         """A research verb arrived: where to look is always the owner's choice, unless he said it in the request."""
         scope = research.scope_in_text(user_text or request)
+        if scope is None and is_live_question(user_text or request):
+            scope = research.WEB  # "qual a cotação do dólar?": nothing in the Mind can answer it, so asking would be noise
         if scope is None:
             offers.offer(chat_id, request, clock())
             await message.reply_text(research.QUESTION, reply_markup=scope_keyboard())

@@ -92,6 +92,28 @@ _WORK_REQUEST = re.compile(
 _NOT_WORK = re.compile(r"\b(?:agenda|compromissos?|eventos?|reunia[oa]\w*|lembretes?)\b")
 
 
+# A question about something that changes or is public ("qual a cotação do dólar?", "quem ganhou o jogo?", "como está
+# o tempo em Recife?") has no research verb, yet only a lookup answers it, and a made-up number would be worse than
+# none. It counts as a request for the internet when it asks something AND points at live data AND is not about his own
+# things (those have their own paths: tasks, agenda, reminders, the Mind).
+_ASKING = re.compile(r"^\s*(?:jarvis[\s,:]+)?(?:qual|quais|quanto|quantos|quantas|quem|quando|onde|como|o que|que horas|ta|esta|estao|sera|vai)\b|\?\s*$")
+_LIVE_DATA = re.compile(
+    r"\b(?:cotacao|cambio|dolar|euro|libra|bitcoin|btc|ethereum|bolsa|ibovespa|selic|inflacao|ipca|preco|quanto custa|"
+    r"quanto (?:ta|esta|vale)|clima|previsao|temperatura|vai chover|placar|resultado|campeonato|jogo|noticias?|"
+    r"aconteceu|ultimas?|atual\w*|agora|ao vivo|trending|lancamento|estreia|cartaz|aberto agora)\b"
+)
+_PERSONAL = re.compile(
+    r"\b(?:meu|meus|minha|minhas|eu tenho|tenho|no mind|nas? notas|tarefas?|agenda|compromissos?|lembretes?|"
+    r"pendencias?|meu dia|o que (?:eu )?(?:preciso|falta))\b"
+)
+
+
+def is_live_question(text: str) -> bool:
+    """A question about current or public data, with no research verb and not about the owner's own things."""
+    folded = fold(text)
+    return bool(_ASKING.search(folded) and _LIVE_DATA.search(folded) and not _PERSONAL.search(folded))
+
+
 def parse_work_request(text: str) -> str | None:
     """The request for the Worker if the message starts with a research verb ("pesquisa no Mind tudo sobre X"),
     else None. A bare verb, or a calendar or reminder matter, is left to the other paths."""
@@ -110,7 +132,8 @@ def has_intent(action: str, text: str) -> bool:
                "cancelar_evento": _CANCEL_INTENT, "delegar_trabalho": _WORK_INTENT}.get(action)
     if pattern is None:
         return True
-    return bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))
+    return (bool(pattern.search(folded)) or (action == "anotar" and is_yes(text))
+            or (action == "delegar_trabalho" and is_live_question(text)))
 
 
 _YES_WORDS = {
