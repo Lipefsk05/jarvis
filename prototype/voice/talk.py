@@ -11,9 +11,12 @@ Run in the Windows venv:
     python talk.py --mic Logitech --out Realtek   pick devices by a part of their name
     python talk.py --list                   list the audio devices
     python talk.py --simulate               no devices: synthetic voices play the owner (proves the interruption)
+    python talk.py --save-audio             also keep each thing you say as a WAV in the output folder (local only),
+                                            so bench_clips.py can compare Whisper models on your real voice
 """
 import argparse
 import asyncio
+import csv
 import io
 import queue
 import sys
@@ -25,7 +28,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-from common import add_cuda_dlls, read_env
+from common import OUT, add_cuda_dlls, read_env
 from duplex import FRAME, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
 from turn_loop import SRC, VOICE, VOICE_RULES, clean, cut, load, load_template, pick_mic, polish, render, stream_groq
 from turn_loop import for_speech, is_greeting, starts_with_greeting
@@ -108,6 +111,7 @@ def main() -> None:
     parser.add_argument("--idle", type=float, default=IDLE_S)
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--simulate", action="store_true")
+    parser.add_argument("--save-audio", action="store_true")
     args = parser.parse_args()
     if args.list:
         for i, d in enumerate(sd.query_devices()):
@@ -149,6 +153,18 @@ def main() -> None:
     def stamp(message: str) -> None:
         print(f"[{time.perf_counter() - t_zero:5.1f}s] {message}" if simulated else message)
 
+    clips = {"n": 0}
+
+    def save_clip(audio: np.ndarray, quick: bool, text: str, seconds: float) -> None:
+        """Keep what the microphone heard, with what Whisper wrote, to compare models later (never leaves the PC)."""
+        folder = OUT / "clips"
+        folder.mkdir(exist_ok=True)
+        clips["n"] += 1
+        name = f"{datetime.now():%Y%m%d-%H%M%S}-{clips['n']:03d}{'-checagem' if quick else ''}.wav"
+        sf.write(folder / name, audio, RATE)
+        with open(folder / "clips.csv", "a", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow([name, "checagem" if quick else "frase", f"{seconds:.2f}", text])
+
     def transcribe(audio: np.ndarray, quick: bool = False) -> str:
         """`quick` is the "was that his name?" check: a few words are enough, so the output is capped (an unbounded
         decode of an odd chunk once took 6 s while he kept talking)."""
@@ -160,6 +176,8 @@ def main() -> None:
         segments, _ = whisper.transcribe(audio, language="pt", beam_size=1, vad_filter=False,
                                          condition_on_previous_text=False, **extra)
         text = " ".join(s.text.strip() for s in segments)
+        if args.save_audio and not args.simulate:  # synthetic voices must never end up among the owner's clips
+            save_clip(audio, quick, text, time.perf_counter() - started)
         print(f"  [Whisper{' (checagem)' if quick else ''} {time.perf_counter() - started:.2f} s, {len(audio) / RATE:.1f} s de áudio]"
               + (f" «{text}»" if quick else ""))
         return text
@@ -168,7 +186,7 @@ def main() -> None:
     def start_speech(heard: str, history: list[dict], speech, player: Player) -> None:
         texts: queue.Queue = queue.Queue()
         t0 = time.perf_counter()
-        first = {"sound": None}
+        first = {"sound": None, "token": None, "sentence": None, "synth": None}
 
         def tidy(sentence: str) -> str:
             sentence = clean(sentence)
@@ -186,11 +204,13 @@ def main() -> None:
                     if speech.cancelled.is_set():
                         stream.close()
                         return
+                    first["token"] = first["token"] or time.perf_counter() - t0
                     buffer += piece
                     sentences, buffer = cut(buffer, is_first)
                     for sentence in sentences:
                         is_first = False
                         if (sentence := tidy(sentence)):
+                            first["sentence"] = first["sentence"] or time.perf_counter() - t0
                             speech.sentences.append(sentence)
                             texts.put((len(speech.sentences) - 1, sentence))
                 if (tail := tidy(buffer)) and not speech.cancelled.is_set():
@@ -233,7 +253,9 @@ def main() -> None:
                     audio, rate = sf.read(io.BytesIO(data), dtype="float32")
                     if first["sound"] is None:
                         first["sound"] = time.perf_counter() - t0
-                        print(f"  jarvis (1º som {first['sound']:.2f} s após a transcrição): {sentence}")
+                        token, ready = first["token"] or 0.0, first["sentence"] or 0.0
+                        print(f"  jarvis (1º som {first['sound']:.2f} s após a transcrição = 1º token do Groq {token:.2f} + "
+                              f"1ª frase pronta +{ready - token:.2f} + voz Edge +{first['sound'] - ready:.2f}): {sentence}")
                     else:
                         print(f"  jarvis: {sentence}")
                     player.enqueue(index, audio, rate)

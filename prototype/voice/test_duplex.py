@@ -73,6 +73,16 @@ class ExitTest(unittest.TestCase):
             self.assertFalse(d.is_exit(text), text)
 
 
+class UnfinishedTest(unittest.TestCase):
+    def test_sounds_unfinished(self):
+        for text in ("Então, eu queria saber", "Eu estava pensando...", "O Firebase é.", "Eu acho que,", "Quero saber se"):
+            self.assertTrue(d.looks_unfinished(text), text)
+
+    def test_sounds_finished(self):
+        for text in ("Me explica o Supabase.", "Quanto custa o dólar?", "Obrigado!", ""):
+            self.assertFalse(d.looks_unfinished(text), text)
+
+
 class NameTest(unittest.TestCase):
     def test_the_name_in_the_ways_whisper_writes_it(self):
         for text in ("Jarvis", "jarvis, para", "Ei Jarvis!", "Jarves, espera", "já vis", "Pera aí, Jarvis"):
@@ -148,35 +158,35 @@ class ConversationTest(unittest.TestCase):
         return seconds_of(quiet, 0.1) + seconds_of(voice, seconds) + seconds_of(quiet, d.SILENCE_S + 0.1)
 
     def test_a_spoken_sentence_is_answered_without_calling_him(self):
-        self.heard = ["bom dia"]
+        self.heard = ["Bom dia."]
         self.build(self.sentence())
         self.run_conv()
-        self.assertEqual(self.started, ["bom dia"])
-        self.assertEqual(self.conv.history, [{"role": "user", "content": "bom dia"}])
+        self.assertEqual(self.started, ["Bom dia."])
+        self.assertEqual(self.conv.history, [{"role": "user", "content": "Bom dia."}])
 
     def test_calling_his_name_over_the_answer_cuts_it_and_the_rest_is_the_next_turn(self):
-        self.heard = ["primeira", "jarvis, me fala", "Jarvis, me fala só do Supabase"]
+        self.heard = ["Primeira.", "jarvis, me fala", "Jarvis, me fala só do Supabase."]
         self.first_turn = self.sentence()
         self.build(self.first_turn + self.over(2.0), hook=self.answer_started())
         self.run_conv()
-        self.assertEqual(self.started, ["primeira", "me fala só do Supabase"])
+        self.assertEqual(self.started, ["Primeira.", "me fala só do Supabase"])
         self.assertEqual(self.conv.interruptions, 1)
-        self.assertEqual(self.conv.history[1], {"role": "assistant", "content": "resposta a primeira [o senhor interrompeu]"})
+        self.assertEqual(self.conv.history[1], {"role": "assistant", "content": "resposta a Primeira. [o senhor interrompeu]"})
         self.assertEqual(self.conv.history[2], {"role": "user", "content": "me fala só do Supabase"})
 
     def test_a_voice_that_does_not_call_him_is_ignored_and_he_goes_on(self):
-        self.heard = ["primeira", "pera aí, deixa eu ver", "pera aí, deixa eu ver uma coisa", "pera aí, deixa eu ver uma coisa aqui"]
+        self.heard = ["Primeira.", "pera aí, deixa eu ver", "pera aí, deixa eu ver uma coisa", "pera aí, deixa eu ver uma coisa aqui"]
         self.first_turn = self.sentence()
         self.build(self.first_turn + self.over(3.0), hook=self.answer_started())
         self.run_conv()
-        self.assertEqual(self.started, ["primeira"])
+        self.assertEqual(self.started, ["Primeira."])
         self.assertEqual(self.conv.interruptions, 0)
         self.assertEqual(self.conv.ignored, 1)
         self.assertTrue(self.player.busy)
         self.assertEqual(self.player._volume, 1.0)  # his volume came back
 
     def test_his_volume_is_lowered_while_checking(self):
-        self.heard = ["primeira", "não é comigo", "não é comigo, não", "não é comigo, não"]
+        self.heard = ["Primeira.", "não é comigo", "não é comigo, não", "não é comigo, não"]
         self.first_turn = self.sentence()
         seen = []
         hook = self.answer_started()
@@ -191,22 +201,22 @@ class ConversationTest(unittest.TestCase):
         self.assertEqual(seen[-1], 1.0)
 
     def test_a_short_blip_over_him_is_not_even_checked(self):
-        self.heard = ["primeira"]  # a second transcription would raise IndexError
+        self.heard = ["Primeira."]  # a second transcription would raise IndexError
         self.first_turn = self.sentence()
         self.build(self.first_turn + seconds_of(voice, 0.1) + seconds_of(quiet, 1.0), hook=self.answer_started())
         self.run_conv()
         self.assertEqual((self.conv.interruptions, self.conv.ignored), (0, 0))
 
     def test_only_his_name_cuts_and_waits_for_the_next_sentence(self):
-        self.heard = ["primeira", "Jarvis", "Jarvis"]
+        self.heard = ["Primeira.", "Jarvis", "Jarvis"]
         self.first_turn = self.sentence()
         self.build(self.first_turn + self.over(1.3), hook=self.answer_started())
         self.run_conv()
-        self.assertEqual(self.started, ["primeira"])
+        self.assertEqual(self.started, ["Primeira."])
         self.assertEqual(self.conv.interruptions, 1)
 
     def test_if_he_finishes_by_himself_the_voice_over_him_is_a_normal_turn(self):
-        self.heard = ["primeira", "e o supabase?"]
+        self.heard = ["Primeira.", "E o Supabase?"]
         self.first_turn = self.sentence()
         hook = self.answer_started()
 
@@ -217,11 +227,41 @@ class ConversationTest(unittest.TestCase):
 
         self.build(self.first_turn + self.over(1.6), hook=finishing)
         self.run_conv()
-        self.assertEqual(self.started, ["primeira", "e o supabase?"])
+        self.assertEqual(self.started, ["Primeira.", "E o Supabase?"])
         self.assertEqual(self.conv.interruptions, 0)
 
+    def test_the_early_transcription_is_reused_when_he_said_nothing_after_it(self):
+        self.heard = ["Bom dia."]  # a second transcription would raise IndexError
+        self.build(self.sentence())
+        self.run_conv()
+        self.assertEqual(self.conv.early_hits, 1)
+        self.assertEqual(self.started, ["Bom dia."])
+
+    def test_a_sentence_that_sounds_unfinished_waits_a_little_and_then_answers_it(self):
+        self.heard = ["Então, eu queria saber..."]
+        self.build(self.sentence() + seconds_of(quiet, d.HOLD_S + 0.2))
+        self.run_conv()
+        self.assertEqual(self.conv.holds, 1)
+        self.assertEqual(self.started, ["Então, eu queria saber..."])
+
+    def test_if_he_goes_on_after_a_thinking_pause_it_is_one_sentence(self):
+        self.heard = ["Então, eu queria saber", "Então, eu queria saber como funciona o Supabase."]
+        script = self.sentence() + seconds_of(quiet, 0.2) + seconds_of(voice, 0.8) + seconds_of(quiet, d.SILENCE_S + 0.1)
+        self.build(script)
+        self.run_conv()
+        self.assertEqual(self.started, ["Então, eu queria saber como funciona o Supabase."])
+        self.assertEqual(self.conv.history[0]["content"], "Então, eu queria saber como funciona o Supabase.")
+
+    def test_the_wait_happens_only_once_per_sentence(self):
+        self.heard = ["Então, eu queria saber", "Então, eu queria saber como funciona"]
+        script = self.sentence() + seconds_of(quiet, 0.2) + seconds_of(voice, 0.8) + seconds_of(quiet, d.SILENCE_S + 0.1)
+        self.build(script)
+        self.run_conv()
+        self.assertEqual(self.conv.holds, 1)
+        self.assertEqual(self.started, ["Então, eu queria saber como funciona"])  # still unfinished, but no second wait
+
     def test_the_exit_phrase_says_goodbye_and_ends(self):
-        self.heard = ["tchau"]
+        self.heard = ["Tchau."]
         self.build(self.sentence() + seconds_of(quiet, 0.2))
         self.run_conv()
         self.assertEqual(self.said, ["Até logo, senhor."])

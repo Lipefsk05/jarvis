@@ -32,6 +32,8 @@ CHECK_EVERY_S = 1.5              # and again every this many seconds while the v
 MAX_CHECKS = 3
 DUCK = 0.25                      # his volume while checking, so he does not talk full blast over the owner
 SILENCE_S = 0.70                 # quiet that ends the sentence
+SPEC_S = 0.35                    # quiet after which the transcription starts early (thrown away if he talks again)
+HOLD_S = 0.80                    # extra wait when the sentence sounds unfinished ("então...", no full stop): he may be thinking
 IDLE_S = 20.0                    # no one talking for this long ends the conversation mode
 
 EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:tchau|ate logo|ate mais|encerra\w*|chega por hoje|pode parar)\b")
@@ -59,6 +61,23 @@ def strip_name(text: str) -> str:
     # fold() keeps the length of ASCII text and only drops combining marks, so cut the original at the same word count
     words_removed = len(folded[:match.end()].split())
     return " ".join(text.split()[words_removed:]).strip(" ,.:;-!?")
+
+
+_UNFINISHED_END = {"e", "é", "então", "entao", "tipo", "mas", "que", "aí", "ai", "tá", "ta", "hum", "hmm", "né", "bom", "bem",
+                   "ou", "porque", "pra", "para", "de", "do", "da", "com", "a", "o", "um", "uma", "como", "se", "quando", "só"}
+
+
+def looks_unfinished(text: str) -> bool:
+    """Does the sentence sound like he stopped to think? No closing punctuation, a trailing "...", or a hanging word."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.endswith(("...", "…", ",")):
+        return True
+    if not stripped.endswith((".", "?", "!")):
+        return True
+    last = fold(stripped.rstrip(".?!")).split()
+    return bool(last) and last[-1] in _UNFINISHED_END
 
 
 def is_exit(text: str) -> bool:
@@ -109,6 +128,11 @@ class SpeechGate:
             self.active, self._run = False, 0.0
             return "end"
         return None
+
+    @property
+    def quiet_s(self) -> float:
+        """Seconds of quiet since the last voice, while a sentence is going on."""
+        return self._quiet if self.active else 0.0
 
     def reset(self) -> None:
         self.active, self._run, self._quiet = False, 0.0, 0.0
@@ -220,6 +244,14 @@ class Conversation:
         self._next_check = CHECK_FIRST_S
         self.interruptions = 0
         self.ignored = 0              # voices over him that did not call him
+        self._voiced = 0              # voiced frames in the current recording (tells a stale early transcription)
+        self._spec: dict | None = None  # the early transcription: {"voiced": n, "text": str|None, "thread": Thread}
+        self._holding = False         # the sentence sounded unfinished: waiting a little more before answering
+        self._held_text = ""
+        self._hold_quiet = 0.0
+        self._extended = False        # the extra wait is used at most once per sentence
+        self.early_hits = 0           # times the early transcription was reused
+        self.holds = 0                # times the extra wait happened
 
     def _speaking(self) -> bool:
         return self._speech is not None and (self._speech.generating or self._player.busy)
@@ -280,11 +312,33 @@ class Conversation:
         self._start_speech(heard, self.history[-12:], self._speech, self._player)
         return True
 
+    def _start_early(self) -> None:
+        """Start transcribing what was said so far, in the background, before he is known to have finished."""
+        audio = np.concatenate(self._recording)
+        spec = {"voiced": self._voiced, "text": None}
+
+        def work() -> None:
+            spec["text"] = self._transcribe(audio)
+
+        spec["thread"] = threading.Thread(target=work, daemon=True)
+        spec["thread"].start()
+        self._spec = spec
+
+    def _heard(self, audio: np.ndarray) -> str:
+        """The transcription of the finished sentence: the early one when nothing was said after it, else a new one."""
+        spec, self._spec = self._spec, None
+        if spec is not None:
+            spec["thread"].join()  # never two transcriptions on the GPU at once
+            if spec["voiced"] == self._voiced and spec["text"] is not None:
+                self.early_hits += 1
+                return spec["text"].strip()
+        return self._transcribe(audio).strip()
+
     def _finish(self, audio: np.ndarray) -> bool:
         """The owner stopped talking. Returns False to end the conversation."""
         checking, named = self._checking, self._named
         self._checking, self._named = False, False
-        heard = self._transcribe(audio).strip()
+        heard = self._heard(audio) if not checking else self._transcribe(audio).strip()
         if checking and not named:
             if self._speaking():
                 if not has_name(heard):  # he talked over, never called him: ignored
@@ -319,15 +373,41 @@ class Conversation:
                     event = "end"
             if self._gate.active or speaking:
                 last_activity = now
+            voiced = self._gate.active and self._gate.quiet_s == 0.0
+            if self._recording is not None and voiced:
+                self._voiced += 1
             if event == "start":
-                self._recording = list(self._ring)
+                if self._holding:  # he went on after the extra wait: it is all one sentence
+                    self._holding, self._hold_quiet, self._extended = False, 0.0, True
+                else:
+                    self._recording = list(self._ring)
+                    self._voiced, self._spec, self._extended = 1, None, False
                 if speaking:
                     self._checking, self._named, self._checks, self._next_check = True, False, 0, CHECK_FIRST_S
                     self._player.set_volume(DUCK)
+            elif self._holding and self._recording is not None:
+                self._hold_quiet += FRAME_S
+                if self._hold_quiet >= HOLD_S:  # he did not go on: answer what was already heard
+                    text, self._holding = self._held_text, False
+                    self._recording, self._spec = None, None
+                    if not self._turn(text):
+                        return
+                    last_activity = self._clock()
             elif event == "end" and self._recording is not None:
-                audio, self._recording = np.concatenate(self._recording), None
+                frames, self._recording = self._recording, None
+                audio = np.concatenate(frames)
                 self._gate.reset()
-                if not self._finish(audio):
+                if (not self._checking and not self._extended and not self._holding):
+                    heard = self._heard(audio)
+                    if looks_unfinished(heard) and len(heard) >= 2:
+                        self._holding, self._held_text, self._hold_quiet = True, heard, 0.0
+                        self._recording = frames  # keep what was said; the voice, if it comes back, is appended
+                        self.holds += 1
+                        self._log("  (parece que o senhor ainda vai continuar: espero um pouco)")
+                        continue
+                    if not self._turn(heard):
+                        return
+                elif not self._finish(audio):
                     return
                 last_activity = self._clock()
             if (self._recording is not None and self._checking and not self._named
@@ -337,3 +417,7 @@ class Conversation:
                 else:  # he stopped talking while the voice went on: nothing to protect any more
                     self._player.set_volume(1.0)
                     self._checking = False
+            if (self._recording is not None and not self._checking and not self._holding and self._gate.active
+                    and self._gate.quiet_s >= SPEC_S
+                    and (self._spec is None or self._spec["voiced"] != self._voiced)):
+                self._start_early()
