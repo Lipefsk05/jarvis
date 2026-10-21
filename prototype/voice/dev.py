@@ -11,7 +11,6 @@ with the full Claude Code behind it, but the voice is always the Jarvis: nothing
 
 Pure logic and one subprocess wrapper, so the tests need no audio and no network (stdlib only)."""
 import json
-import os
 import random
 import re
 import subprocess
@@ -27,7 +26,13 @@ MIND_DIR = "/home/felip/projetos/mind"
 CLAUDE = "/home/felip/.local/bin/claude"
 # --exec runs the program with no shell in between: through the default shell, the parentheses of a rule like
 # `Bash(git status:*)` were a syntax error and the work never started (found in the first real test, 2026-10-21).
-WSL_PREFIX = ["wsl.exe", "-d", "Ubuntu", "--cd", MIND_DIR, "--exec"]
+# The same PATH as his terminal (nvm's node, ~/.local/bin): through plain `wsl.exe` it was missing and the work used the
+# system's npm 9.2.0 instead of his 10.8.2 (found in the 2nd real test). `bash -c '...' _ args` keeps the arguments intact.
+_PATH_FIX = ('v=$(cat "$HOME/.nvm/alias/default" 2>/dev/null); '
+             'n=$(ls -d "$HOME"/.nvm/versions/node/v"$v"*/bin 2>/dev/null | tail -1); '
+             '[ -n "$n" ] || n=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | tail -1); '
+             'export PATH="$n:$HOME/.local/bin:$PATH"; exec "$@"')
+WSL_PREFIX = ["wsl.exe", "-d", "Ubuntu", "--cd", MIND_DIR, "--exec", "bash", "-c", _PATH_FIX, "_"]
 BRIEFING_FILE = "/home/felip/projetos/jarvis/state/dev-briefing.txt"  # the instructions travel in a file, not on the command line
 CEILING_S = 600.0                 # per sentence, from the question to the answer (thinking, reading, editing, tests)
 NOTICE_S = 300.0                  # at half the ceiling the Jarvis says it is still working
@@ -68,6 +73,8 @@ def _fold(text: str) -> str:
 
 # Names of the owner's files and projects that the Whisper splits or garbles; fixed before the sentence goes to the work.
 _MISHEARD = (
+    (re.compile(r"\bnpm[\s-]*(?:menos[\s-]*){1,2}(\w+)\b", re.IGNORECASE), r"npm --\1"),
+    (re.compile(r"\bnpm[\s-]+version\b", re.IGNORECASE), "npm --version"),
     (re.compile(r"\b(?:d[oa]|de|espaco|espa\w+) ?plex\b", re.IGNORECASE), "duplex"),
     (re.compile(r"\bdu ?plex\b", re.IGNORECASE), "duplex"),
 )
@@ -86,7 +93,7 @@ def fix_names(text: str) -> str:
 def _sub_at(original: str, folded: str, pattern, right: str) -> str:
     out, last = [], 0
     for match in pattern.finditer(folded):
-        out += [original[last:match.start()], right]
+        out += [original[last:match.start()], match.expand(right)]
         last = match.end()
     return "".join(out) + original[last:]
 
@@ -94,9 +101,34 @@ def _sub_at(original: str, folded: str, pattern, right: str) -> str:
 def parse_mode(text: str) -> str | None:
     """"dev" / "casual" when the sentence switches the mode, else None."""
     folded = _fold(text)
+    if len(folded.split()) > 6:
+        return None  # "olha o arquivo e me diz como funciona o modo dev" is a request that mentions it, not the switch
     if _CASUAL.search(folded):
         return "casual"
     return "dev" if _DEV_ON.search(folded) else None
+
+
+_STOP_ALL = re.compile(r"\bpara tudo\b|\bcancela tudo\b|\bencerra tudo\b")
+_STOP = re.compile(r"\b(?:para|pare|cancela|cancele|aborta|aborte|deixa pra la|deixa isso|esquece|esqueca|chega)\b")
+_CONTINUE = re.compile(r"\b(?:continua|continue|segue|siga|retoma|retome|prossegue|prossiga|pode continuar|pode seguir|pode falar)\b")
+_STATUS = re.compile(r"\bcomo (?:esta|ta|anda|vai)\b|\bja (?:acabou|terminou|esta pronto)\b|\bo que (?:voce )?esta fazendo\b|\bqual o status\b")
+
+
+def parse_job_command(text: str) -> str | None:
+    """A short command to the work that is running: "stop_all", "stop", "continue" (the voice goes on) or "status"."""
+    folded = _fold(text)
+    if len(folded.split()) > 7:
+        return None  # a longer sentence is a new request, not a command
+    for name, pattern in (("stop_all", _STOP_ALL), ("stop", _STOP), ("continue", _CONTINUE), ("status", _STATUS)):
+        if pattern.search(folded):
+            return name
+    return None
+
+
+def label_for(request: str, words: int = 5) -> str:
+    """A short name for a job, from the first words of what the owner asked ("olha o duplex e me diz o que ele faz" -> ...)."""
+    cleaned = re.sub(r"[^\w\s.-]", "", fix_names(request)).split()
+    return " ".join(cleaned[:words]) or "o último pedido"
 
 
 def parse_setting(text: str) -> tuple[str, str] | None:
@@ -307,6 +339,7 @@ class TurnResult:
     seconds: float = 0.0
     timed_out: bool = False
     cancelled: bool = False
+    early_denial: bool = False   # stopped at the first denied tool: the rest of the turn would only be the work flailing around it
     error: str = ""
 
 
@@ -356,6 +389,10 @@ def write_briefing(path: str = BRIEFING_FILE) -> None:
         target.write_text(DEV_BRIEFING, encoding="utf-8")
 
 
+_DENIED = re.compile(r"requires approval|has been denied|haven't granted it yet|requested permissions")
+_GATED_TOOLS = ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch")
+
+
 def run_turn(prompt: str, session_id: str | None, tools: list[str], ceiling_s: float | None, on_tool, cancelled: threading.Event,
              popen=subprocess.Popen, windows: bool | None = None) -> TurnResult:
     """One sentence of the conversation. `on_tool(name, input)` is called for each tool the work uses (to announce it);
@@ -368,6 +405,7 @@ def run_turn(prompt: str, session_id: str | None, tools: list[str], ceiling_s: f
     except OSError as exc:
         return TurnResult(error=f"não consegui iniciar o trabalho ({type(exc).__name__})")
     state = {"timed_out": False}
+    uses: dict[str, tuple[str, dict]] = {}  # tool_use id -> (name, input), to know what a denial was about
 
     def watchdog() -> None:
         while proc.poll() is None:
@@ -399,7 +437,20 @@ def run_turn(prompt: str, session_id: str | None, tools: list[str], ceiling_s: f
         if kind == "assistant":
             for block in event.get("message", {}).get("content", []):
                 if block.get("type") == "tool_use":
+                    uses[block.get("id", "")] = (block.get("name", ""), block.get("input", {}) or {})
                     on_tool(block.get("name", ""), block.get("input", {}) or {})
+        elif kind == "user" and not result.early_denial:
+            for block in event.get("message", {}).get("content", []):
+                used = uses.get(block.get("tool_use_id", "")) if isinstance(block, dict) else None
+                if (used and block.get("is_error") and used[0] in _GATED_TOOLS
+                        and _DENIED.search(str(block.get("content", "")))):
+                    # the first denial ends the turn: the Jarvis asks right away instead of the work trying other ways for a minute
+                    result.denials = [{"tool_name": used[0], "tool_input": used[1], "tool_use_id": block.get("tool_use_id")}]
+                    result.early_denial = True
+                    proc.kill()
+                    break
+        elif kind == "system" and event.get("session_id") and not result.session_id:
+            result.session_id = event.get("session_id")  # known from the start, so a turn stopped early can still be resumed
         elif kind == "result":
             result.text = str(event.get("result", ""))
             result.session_id = event.get("session_id")
@@ -407,8 +458,8 @@ def run_turn(prompt: str, session_id: str | None, tools: list[str], ceiling_s: f
             if event.get("is_error"):
                 result.error = result.text or "o trabalho terminou com erro"
     proc.wait()
-    if not result.text and not result.error and not state["timed_out"] and not result.cancelled:
-        result.error = " | ".join(stray) or "o trabalho terminou sem resposta"  # never silent: the owner must hear that it failed
+    if not result.text and not result.error and not state["timed_out"] and not result.cancelled and not result.early_denial:
+        result.error = " | ".join(stray) or f"o trabalho terminou sem resposta (código {proc.returncode})"  # never silent: the owner must hear that it failed
     result.seconds = time.perf_counter() - started
     result.timed_out = state["timed_out"]
     return result

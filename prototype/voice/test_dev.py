@@ -16,7 +16,8 @@ class ModeTest(unittest.TestCase):
             self.assertEqual(dev.parse_mode(text), "casual", text)
         for text in ("Modo Dev.", "modo deve", "mode dev"):
             self.assertEqual(dev.parse_mode(text), "dev", text)
-        for text in ("que horas são", "o modo de fazer isso", "device", "o que eu devo fazer", "como é o do deve?"):
+        for text in ("que horas são", "o modo de fazer isso", "device", "o que eu devo fazer", "como é o do deve?",
+                     "Olhe o arquivo talk.py e me diz como funciona o modo dev.", "me explica o modo casual do jarvis por favor"):
             self.assertIsNone(dev.parse_mode(text), text)
 
     def test_settings_by_voice(self):
@@ -26,6 +27,27 @@ class ModeTest(unittest.TestCase):
         self.assertEqual(dev.parse_setting("o que eu autorizei?"), ("list", ""))
         self.assertEqual(dev.parse_setting("tira a autorização do npm test"), ("revoke", "npm test"))
         self.assertIsNone(dev.parse_setting("roda os testes"))
+
+
+class JobCommandTest(unittest.TestCase):
+    def test_short_commands_to_the_running_work(self):
+        for text in ("para", "Jarvis, deixa pra lá", "cancela isso", "esquece"):
+            self.assertEqual(dev.parse_job_command(text), "stop", text)
+        for text in ("para tudo", "cancela tudo"):
+            self.assertEqual(dev.parse_job_command(text), "stop_all", text)
+        for text in ("continua", "pode continuar", "segue"):
+            self.assertEqual(dev.parse_job_command(text), "continue", text)
+        for text in ("como está isso?", "já acabou?", "o que você está fazendo?"):
+            self.assertEqual(dev.parse_job_command(text), "status", text)
+
+    def test_a_longer_sentence_is_a_new_request_not_a_command(self):
+        self.assertIsNone(dev.parse_job_command("para de mexer nisso e olha também o arquivo do forge agora por favor"))
+        self.assertIsNone(dev.parse_job_command("olha o arquivo duplex.py e me diz o que ele faz"))
+        self.assertIsNone(dev.parse_job_command("roda os testes"))
+
+    def test_a_job_gets_a_short_name_from_the_request(self):
+        self.assertEqual(dev.label_for("Olha o arquivo do plex.py e me diz o que ele faz."), "Olha o arquivo duplex.py e")
+        self.assertEqual(dev.label_for("   "), "o último pedido")
 
 
 class PermissionTest(unittest.TestCase):
@@ -105,6 +127,8 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(dev.fix_names("abre o espaço plex.py"), "abre o duplex.py")
         self.assertEqual(dev.fix_names("Olha o duplex.py"), "Olha o duplex.py")
         self.assertEqual(dev.fix_names("Roda os testes"), "Roda os testes")
+        for said in ("Roda um NPM-Version.", "Roda um NPM menos menos version.", "roda um npm--version", "Roda um npm version"):
+            self.assertIn("npm --version", dev.fix_names(said), said)
 
 
 class SettingsBlockTest(unittest.TestCase):
@@ -270,6 +294,28 @@ class RunTurnTest(unittest.TestCase):
         result, _ = self.run_it(proc)
         self.assertIn("syntax error", result.error)
         self.assertEqual(result.text, "")
+
+    def test_the_first_denied_tool_ends_the_turn_and_is_returned_for_the_question(self):
+        proc = FakeProc([
+            event(type="system", subtype="init", session_id="s-9"),
+            event(type="assistant", message={"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm --version"}}]}),
+            event(type="user", message={"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "This command requires approval"}]}),
+        ], block=True)
+        result, seen = self.run_it(proc, ceiling=5)
+        self.assertTrue(result.early_denial)
+        self.assertTrue(proc.killed.is_set())
+        self.assertEqual(result.denials[0]["tool_input"]["command"], "npm --version")
+        self.assertEqual((result.session_id, result.error, result.timed_out), ("s-9", "", False))  # resumable, and not an error
+
+    def test_an_error_that_is_not_a_permission_denial_does_not_stop_the_turn(self):
+        proc = FakeProc([
+            event(type="assistant", message={"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/x"}}]}),
+            event(type="user", message={"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "File does not exist."}]}),
+            event(type="result", result="Não achei.", session_id="s"),
+        ])
+        result, _ = self.run_it(proc)
+        self.assertFalse(result.early_denial)
+        self.assertEqual(result.text, "Não achei.")
 
     def test_it_never_starts_when_the_binary_is_missing(self):
         def broken(*a, **k):

@@ -238,8 +238,14 @@ def main() -> None:
                 else:
                     print(f"  jarvis: {sentence}")
                 player.enqueue(index, audio, rate)
+                conversation.note_spoken(sentence)
         finally:
             speech.generating = False
+            try:  # an event loop left open prints "Task was destroyed but it is pending" when it is collected
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+            except Exception:
+                pass
 
     # --- thinking and speaking, cancellable ---------------------------------------------------------------
     def start_speech(heard: str, history: list[dict], speech, player: Player) -> None:
@@ -306,8 +312,12 @@ def main() -> None:
 
         audio, rate = sf.read(io.BytesIO(asyncio.run(synth())), dtype="float32")
         player.enqueue(0, audio, rate)
-        while player.busy:
+        conversation.note_spoken(text)
+        started = time.perf_counter()
+        while player.busy and time.perf_counter() - started < 20:  # never block the conversation for ever on a stuck output
             time.sleep(0.05)
+        if time.perf_counter() - started > 8:
+            print(f"  (a fala «{text[:40]}» demorou {time.perf_counter() - started:.0f} s pra terminar)")
         time.sleep(0.3)
 
     ack_lines = ("Pois não, senhor?", "Sim, senhor?", "Às ordens, senhor.")
@@ -369,19 +379,54 @@ def main() -> None:
             return f"{tool}({data['file_path']})"
         return tool
 
+    dev_jobs: list[dict] = []  # every job of this run: {"id", "label", "stop", "running", "muted", "session"}
+
+    def speak_text(text: str, speech, player: Player) -> None:
+        """Speak a finished line the background work announces by itself (nobody was talking when it came)."""
+        texts: queue.Queue = queue.Queue()
+        for index, sentence in enumerate(s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()):
+            speech.sentences.append(sentence.strip())
+            texts.put((index, sentence.strip()))
+        texts.put(None)
+        threading.Thread(target=speak, args=(texts, speech, player, {"sound": None, "token": None, "sentence": None},
+                                             time.perf_counter()), daemon=True).start()
+
     def intercept(heard: str) -> bool:
-        """Mode switches and dev settings are the Jarvis's own business: they never reach the work."""
+        """Mode switches, dev settings and commands to the running work are the Jarvis's own business: they never reach it."""
         mode = dev.parse_mode(heard)
         if mode == "dev":
             dev_state["on"] = True
-            say("Modo dev ligado, senhor. Estou no Mind, com os outros projetos à vista.")
+            say("Modo dev ligado, senhor.")
             return True
         if mode == "casual":
-            dev_state.update(on=False, session=None, extra=[], pending=None)  # leaving forgets this session's permissions
+            for job in dev_jobs:
+                job["stop"].set()  # leaving the mode ends the work too: nothing keeps running behind the owner's back
+            dev_jobs.clear()
+            dev_state.update(on=False, session=None, extra=[], pending=None)  # and forgets this session's permissions
             say("Voltando ao modo casual, senhor.")
             return True
         if not dev_state["on"]:
             return False
+        running = [j for j in dev_jobs if j["running"]]
+        command = dev.parse_job_command(heard)
+        if command in ("stop", "stop_all", "status") and not running:
+            say("Não tenho nada rodando no momento, senhor.")  # no point asking the work about it
+            return True
+        if command and running:
+            if command == "stop_all":
+                for job in running:
+                    job["stop"].set()
+                say("Parei tudo, senhor.")
+            elif command == "stop":
+                running[-1]["stop"].set()
+                say("Parei esse trabalho, senhor.")
+            elif command == "continue":
+                running[-1]["resumed"] = True
+                say("Sigo no trabalho e aviso quando houver novidade, senhor.")
+            else:
+                say(f"Ainda estou em: {running[-1]['label']}, senhor." if len(running) == 1
+                    else f"Tenho {len(running)} trabalhos em andamento, senhor; o último é: {running[-1]['label']}.")
+            return True
         setting = dev.parse_setting(heard)
         if setting is None:
             return False
@@ -402,14 +447,19 @@ def main() -> None:
         return True
 
     def start_dev(heard: str, speech, player: Player) -> None:
-        """One sentence of the dev conversation: the work runs in the background, spoken lines fill the wait, and the
-        summary is spoken at the end (the full text goes to the Telegram)."""
+        """One sentence of the dev conversation. The work runs in the background and keeps running when the owner calls the
+        Jarvis by name (that only hushes the voice): spoken lines fill the wait while he listens, and the result is
+        announced by itself when it is ready. A sentence said while a job runs is a new job, in parallel."""
         texts: queue.Queue = queue.Queue()
         t0 = time.perf_counter()
         first = {"sound": None, "token": None, "sentence": None}
-        prompt, preface = heard, ""
+        prompt, preface, session = heard, "", None
+        running = [j for j in dev_jobs if j["running"]]
+        if not running:
+            session = dev_state["session"]  # nobody working: the conversation goes on in the same session
         pending, dev_state["pending"] = dev_state["pending"], None
         if pending is not None:
+            session = pending["session"]  # the answer belongs to the work that asked
             answer = permission_answer(heard)
             denial = pending["denial"]
             if answer in ("yes", "always"):
@@ -424,56 +474,77 @@ def main() -> None:
                 prompt = "Não autorizado. Siga sem isso e me diga o que ficou de fora."
         if prompt is heard:
             prompt = dev.fix_names(heard)
+        job = {"id": len(dev_jobs) + 1, "label": dev.label_for(heard), "stop": threading.Event(), "running": True,
+               "resumed": False, "session": session}
+        dev_jobs.append(job)
+        speech.working = True  # the Conversation must not take its silence for "he finished talking"
 
-        def emit(text: str) -> None:
-            index = len(speech.sentences)
-            speech.sentences.append(text)
-            texts.put((index, text))
+        def alive() -> bool:
+            return not speech.cancelled.is_set()  # False once the owner called the Jarvis by name or started another job
+
+        def emit(text: str, chatter: bool = False) -> None:
+            if alive():
+                speech.chatter = chatter
+                index = len(speech.sentences)
+                speech.sentences.append(text)
+                texts.put((index, text))
+            elif not chatter or job["resumed"]:  # paused: only results and questions get through, by themselves, until "continua"
+                conversation.announce((f"Sobre {job['label']}, senhor: " if not chatter and any(j["running"] for j in dev_jobs if j is not job) else "") + text)
 
         def work() -> None:
             last = {"line": None, "at": time.perf_counter()}
             done = threading.Event()
+            lines: list[str] = []
 
             def say_progress(line: str) -> None:
-                emit(line)
                 last.update(line=line, at=time.perf_counter())
+                if alive() or job["resumed"]:
+                    emit(line, chatter=True)
 
             def on_tool(name: str, data: dict) -> None:
-                if time.perf_counter() - last["at"] < 8 or speech.cancelled.is_set():
+                if time.perf_counter() - last["at"] < 8:
                     return  # at most one line per 8 s: the work should not turn into a running commentary
                 if (line := dev.progress_line(name, data, last["line"])):
                     say_progress(line)
 
             def ticker() -> None:
                 while not done.wait(2.0):
-                    if time.perf_counter() - last["at"] > 12 and not speech.cancelled.is_set():
+                    if time.perf_counter() - last["at"] > 15:
                         say_progress(dev.pick(dev.STILL, last["line"]))
+
+            def finish_lines() -> None:
+                """The final lines (result, question) are spoken together, as ordinary speech, or announced as one piece."""
+                speech.working = False
+                if alive():
+                    for line in lines:
+                        emit(line)
+                elif lines:
+                    emit(" ".join(lines))
 
             try:
                 if preface:
-                    emit(preface)
+                    lines.append(preface)
                 say_progress(dev.pick(dev.THINKING, None))
                 threading.Thread(target=ticker, daemon=True).start()
-                result = dev.run_turn(prompt, dev_state["session"], dev_settings.tools(dev_state["extra"]),
-                                      dev_settings.ceiling_s if dev_settings.ceiling else None, on_tool, speech.cancelled)
+                result = dev.run_turn(prompt, session, dev_settings.tools(dev_state["extra"]),
+                                      dev_settings.ceiling_s if dev_settings.ceiling else None, on_tool, job["stop"])
                 done.set()
                 if result.session_id:
-                    dev_state["session"] = result.session_id
-                print(f"  [trabalho: {result.seconds:.0f} s{', estourou o teto' if result.timed_out else ''}"
-                      f"{', cortado pelo nome' if result.cancelled else ''}]")
+                    dev_state["session"] = job["session"] = result.session_id
+                print(f"  [trabalho {job['id']}: {result.seconds:.0f} s{', estourou o teto' if result.timed_out else ''}"
+                      f"{', parado pelo senhor' if result.cancelled else ''}]")
                 if result.cancelled:
                     return
                 if result.timed_out:
-                    emit("Isso passou do tempo que me dei, senhor. Se quiser que eu continue, é só dizer.")
+                    lines.append("Isso passou do tempo que me dei, senhor. Se quiser que eu continue, é só dizer.")
                 elif result.error and not result.text.strip():
                     print(f"  (o trabalho falhou: {result.error})")
-                    emit("Tive um problema com isso, senhor.")
+                    lines.append("Tive um problema com isso, senhor.")
                 else:
                     spoken, full = dev.split_reply(result.text)
-                    # with a denial the explanation is just noise before the question: the first two sentences are enough
-                    for sentence in re.split(r"(?<=[.!?])\s+", dev.speakable(spoken, 2 if result.denials else 5)):
-                        if sentence.strip():
-                            emit(sentence.strip())
+                    # with a denial the explanation is only noise before the question: say nothing but the question
+                    if not result.denials:
+                        lines += [x.strip() for x in re.split(r"(?<=[.!?])\s+", dev.speakable(spoken, 5)) if x.strip()]
                     if tg_token and tg_chat and (full != spoken or len(full) > 700):
                         dev.send_telegram(tg_token, tg_chat, full)
                     if result.denials:
@@ -481,21 +552,23 @@ def main() -> None:
                         kind = dev.classify(denial, dev.settings_rules("deny"), dev.settings_rules("ask"))
                         print(f"  [negado: {denial.get('tool_name')} {denial.get('tool_input')} -> {kind}]")
                         if kind == "deny":
-                            emit(f"Isso está bloqueado nas suas configurações, senhor ({dev.describe(denial)}); nem com autorização eu consigo.")
+                            lines.append(f"Esse está bloqueado nas suas configurações, senhor: {dev.describe(denial)}.")
                         elif kind == "ask":
-                            emit(f"Preciso {dev.describe(denial)}, senhor, e as suas configurações pedem a sua aprovação direta; "
-                                 "por voz eu ainda não consigo recebê-la.")
+                            lines.append("Esse pede a sua aprovação direta no terminal, senhor; por voz eu ainda não consigo.")
                             if tg_token and tg_chat:
                                 dev.send_telegram(tg_token, tg_chat, "Preciso da sua aprovação para: " + str(denial.get("tool_input", {}).get("command", denial)))
                         else:
-                            dev_state["pending"] = {"denial": denial}
-                            options = "sim, sempre ou não" if not dev.never_forever(denial) else "sim ou não"
-                            emit(f"Preciso {dev.describe(denial)}, senhor. Autoriza? Diga {options}.")
+                            dev_state["pending"] = {"denial": denial, "session": job["session"]}
+                            lines.append(f"Posso {dev.describe(denial)}, senhor?")  # the answers (sim / sempre / não) will be listed on screen
             except Exception as exc:  # the conversation must outlive any failure of the work
                 print(f"  (erro no trabalho: {type(exc).__name__}: {exc})")
-                emit("Tive um problema com isso, senhor.")
+                lines.append("Tive um problema com isso, senhor.")
             finally:
                 done.set()
+                job["running"] = False
+                if not job["stop"].is_set():
+                    finish_lines()
+                speech.working = False
                 texts.put(None)
 
         threading.Thread(target=work, daemon=True).start()
@@ -515,7 +588,8 @@ def main() -> None:
             return None
 
     conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, route_speech, say=say, ack=ack,
-                                idle_s=args.idle, log=stamp, standby=args.standby and not simulated, intercept=intercept)
+                                idle_s=args.idle, log=stamp, standby=args.standby and not simulated, intercept=intercept,
+                                speak_text=speak_text)
     if simulated:
         simulate(conversation, blocks, player, stamp)
         return
