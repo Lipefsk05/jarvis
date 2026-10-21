@@ -30,6 +30,7 @@ BARGE_IN_S = 0.40                # voice needed, while he talks, to even check f
 CHECK_FIRST_S = 1.2              # seconds of recording at which the first "was it his name?" check happens
 CHECK_EVERY_S = 1.5              # and again every this many seconds while the voice goes on
 MAX_CHECKS = 3
+FADE_S = 0.18                    # time the volume takes to go down when checking for his name, and back up
 DUCK = 0.25                      # his volume while checking, so he does not talk full blast over the owner
 SILENCE_S = 0.70                 # quiet that ends the sentence
 SPEC_S = 0.35                    # quiet after which the transcription starts early (thrown away if he talks again)
@@ -169,7 +170,8 @@ class Player:
         self._chunks: collections.deque = collections.deque()  # [sentence id, samples, offset]
         self._started: list[int] = []
         self._stream = None
-        self._volume = 1.0
+        self._volume = 1.0   # where the volume is going (duck or back to full)
+        self._gain = 1.0     # where it is now: it glides to `_volume` over FADE_S instead of jumping
         self.rate = 0
 
     def _open_sounddevice(self, rate: int, callback, device):
@@ -202,7 +204,13 @@ class Player:
                 chunk[2] += take
                 if chunk[2] >= len(chunk[1]):
                     self._chunks.popleft()
-        outdata[:, 0] = out * self._volume
+        if self._gain == self._volume:
+            outdata[:, 0] = out * self._gain
+        else:
+            step = frames / max(1.0, FADE_S * (self.rate or 24000))
+            new = min(self._volume, self._gain + step) if self._volume > self._gain else max(self._volume, self._gain - step)
+            outdata[:, 0] = out * np.linspace(self._gain, new, frames, dtype=np.float32)
+            self._gain = new
 
     def set_volume(self, volume: float) -> None:
         self._volume = max(0.0, min(1.0, volume))
@@ -252,10 +260,12 @@ class Conversation:
     def __init__(self, frames: Callable[[], np.ndarray | None], vad, gate: SpeechGate, player: Player,
                  transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
                  ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print,
-                 follow_up_s: float = FOLLOW_UP_S, standby: bool = False) -> None:
+                 follow_up_s: float = FOLLOW_UP_S, standby: bool = False,
+                 intercept: Callable[[str], bool] | None = None) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
         self._transcribe, self._start_speech, self._say, self._ack = transcribe, start_speech, say, ack
         self._clock, self._idle_s, self._log, self._follow_up_s = clock, idle_s, log, follow_up_s
+        self._intercept = intercept   # takes a sentence before the model does (mode switches, settings): True = handled
         self._standby = standby       # no Enter: the loop never ends, it falls back to "closed" and waits for his name
         self._closed = standby        # closed = nothing is answered until something said starts with his name
         self._open_until = 0.0        # until when he can talk without calling the Jarvis (the follow-up window)
@@ -361,6 +371,9 @@ class Conversation:
             if self._say:
                 self._say("Até logo, senhor.")
             return False
+        if self._intercept is not None and self._intercept(heard):
+            self._open_window()  # what he said was a command to the Jarvis himself: the next sentence needs no name
+            return True
         self.history.append({"role": "user", "content": heard})
         self._player.reset_heard()
         self._speech = Speech()

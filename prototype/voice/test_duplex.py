@@ -56,6 +56,18 @@ class PlayerTest(unittest.TestCase):
         self.assertEqual(p.heard(), [0, 1])
         self.assertEqual(self.pull(p, 200).sum(), 50 * 2)  # the rest, then silence
 
+    def test_the_volume_glides_instead_of_jumping(self):
+        player = self.make()
+        player.enqueue(0, np.ones(24000, dtype=np.float32), 24000)
+        player.set_volume(0.25)
+        out = np.zeros((1024, 1), dtype=np.float32)
+        player._callback(out, 1024, None, None)
+        self.assertEqual(out[0, 0], 1.0)  # starts from where it was
+        self.assertGreater(out[-1, 0], 0.25)  # not there yet: 1024 frames at 24 kHz is shorter than the fade
+        for _ in range(8):
+            player._callback(out, 1024, None, None)
+        self.assertAlmostEqual(float(out[-1, 0]), 0.25, places=3)  # and it arrives
+
     def test_stop_drops_everything_not_yet_played(self):
         p = self.make()
         p.enqueue(0, np.ones(1000, dtype=np.float32), 24000)
@@ -126,7 +138,7 @@ def seconds_of(frame, seconds): return [frame()] * int(seconds / d.FRAME_S)
 
 
 class ConversationTest(unittest.TestCase):
-    def build(self, script, hook=None, standby=False, idle_s=1e9):
+    def build(self, script, hook=None, standby=False, idle_s=1e9, intercept=None):
         """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
         `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
@@ -155,7 +167,7 @@ class ConversationTest(unittest.TestCase):
 
         self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
                                    say=self.said.append, ack=lambda: self.acks.append(1), clock=lambda: self.now, idle_s=idle_s,
-                                   log=self.logs.append, standby=standby)
+                                   log=self.logs.append, standby=standby, intercept=intercept)
 
     def run_conv(self):
         try:
@@ -373,6 +385,14 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(self.started, ["oi", "e agora?"])
         self.assertIn("  (conversa fechada: chame 'Jarvis' pra abrir)", self.logs)
+
+    def test_an_intercepted_sentence_never_reaches_the_model(self):
+        taken = []
+        self.heard = ["Modo dev.", "Bom dia."]
+        self.build(self.sentence() + self.sentence(), intercept=lambda text: taken.append(text) or text == "Modo dev.")
+        self.run_conv()
+        self.assertEqual(taken, ["Modo dev.", "Bom dia."])
+        self.assertEqual(self.started, ["Bom dia."])
 
     def test_idle_for_too_long_ends_the_conversation(self):
         ticks = iter(range(100))
