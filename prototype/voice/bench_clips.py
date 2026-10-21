@@ -11,6 +11,7 @@ Prints, per clip, what each model wrote and how long it took, then a summary. Th
 import argparse
 import csv
 import json
+import sys
 import time
 import urllib.request
 import uuid
@@ -42,6 +43,7 @@ def groq(model: str, path: Path, key: str) -> tuple[str, float]:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)  # progress shows at once even when the output goes to a file or a pipe
     parser = argparse.ArgumentParser()
     parser.add_argument("--local-large", action="store_true")
     parser.add_argument("--only-phrases", action="store_true")
