@@ -79,7 +79,7 @@ class PlayerTest(unittest.TestCase):
 
 class ExitTest(unittest.TestCase):
     def test_exit_phrases(self):
-        for text in ("Tchau", "tchau, Jarvis", "Até logo!", "jarvis, encerra a conversa", "chega por hoje"):
+        for text in ("Tchau", "tchau, Jarvis", "Até logo!", "jarvis, encerra a conversa", "chega por hoje", "obrigado, tchau", "Valeu, até logo"):
             self.assertTrue(d.is_exit(text), text)
         for text in ("me explica o que é encerramento", "quanto custa o dólar", "não vou dizer tchau agora"):
             self.assertFalse(d.is_exit(text), text)
@@ -138,7 +138,7 @@ def seconds_of(frame, seconds): return [frame()] * int(seconds / d.FRAME_S)
 
 
 class ConversationTest(unittest.TestCase):
-    def build(self, script, hook=None, standby=False, idle_s=1e9, intercept=None):
+    def build(self, script, hook=None, standby=False, idle_s=1e9, intercept=None, start=None, speak_text=None):
         """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
         `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
@@ -165,9 +165,9 @@ class ConversationTest(unittest.TestCase):
             player.enqueue(0, np.ones(24000, dtype=np.float32), 24000)  # 1 s of audio, only played when a test pulls it
             speech.generating = False
 
-        self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
+        self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start or start_speech,
                                    say=self.said.append, ack=lambda: self.acks.append(1), clock=lambda: self.now, idle_s=idle_s,
-                                   log=self.logs.append, standby=standby, intercept=intercept)
+                                   log=self.logs.append, standby=standby, intercept=intercept, speak_text=speak_text)
 
     def run_conv(self):
         try:
@@ -260,6 +260,21 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(self.started, ["Primeira.", "E o Supabase?"])
         self.assertEqual(self.conv.interruptions, 0)
+
+    def test_a_voice_that_was_mostly_over_his_own_speech_and_does_not_call_him_is_an_echo_even_if_he_finished_meanwhile(self):
+        self.heard = ["Primeira."] + ["e o norte esta na frente"] * 3  # two checks while he spoke, then the whole thing
+        self.first_turn = self.sentence()
+        hook = self.answer_started()
+
+        def finishing(n, player):
+            hook(n, player)
+            if n == len(self.first_turn) + 72:  # his speech ends only near the end of the voice: almost all of it overlapped
+                player._callback(np.zeros((24000, 1), dtype=np.float32), 24000, None, None)
+
+        self.build(self.first_turn + self.over(1.7), hook=finishing)
+        self.run_conv()
+        self.assertEqual(self.started, ["Primeira."])
+        self.assertEqual(self.conv.echoes, 1)
 
     def test_the_early_transcription_is_reused_when_he_said_nothing_after_it(self):
         self.heard = ["Bom dia."]  # a second transcription would raise IndexError
@@ -376,7 +391,7 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(self.said, ["Até logo, senhor."])
         self.assertEqual(self.started, ["que horas são?"])  # the "Bom dia." in between was closed-conversation noise
-        self.assertIn("  (conversa fechada: chame 'Jarvis' pra abrir)", self.logs)
+        self.assertTrue(any("conversa fechada" in line for line in self.logs))
 
     def test_standby_silence_closes_the_conversation_and_it_keeps_running(self):
         self.heard = ["Jarvis, oi.", "Jarvis, oi.", "Conversa lateral.", "Jarvis, e agora?", "Jarvis, e agora?"]
@@ -384,7 +399,7 @@ class ConversationTest(unittest.TestCase):
                    hook=self.playing())
         self.run_conv()
         self.assertEqual(self.started, ["oi", "e agora?"])
-        self.assertIn("  (conversa fechada: chame 'Jarvis' pra abrir)", self.logs)
+        self.assertTrue(any("conversa fechada" in line for line in self.logs))
 
     def test_an_intercepted_sentence_never_reaches_the_model(self):
         taken = []
@@ -393,6 +408,85 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(taken, ["Modo dev.", "Bom dia."])
         self.assertEqual(self.started, ["Bom dia."])
+
+    def work_in_background(self, chatter=False):
+        """A start_speech like the dev mode's: it never finishes by itself (the work goes on), and what is playing may be chatter."""
+        self.speeches = []
+
+        def start(heard, history, speech, player):
+            self.started.append(heard)
+            speech.working, speech.chatter = True, chatter
+            self.speeches.append(speech)
+            if chatter:
+                player.enqueue(0, np.ones(24000, dtype=np.float32), 24000)  # a progress line, never pulled: still "playing"
+        return start
+
+    def test_while_work_goes_on_in_the_background_silence_is_not_him_speaking_and_the_window_stays_open(self):
+        self.heard = ["Primeira.", "Segunda coisa."]
+        script = self.sentence() + seconds_of(quiet, d.FOLLOW_UP_S + 5.0) + self.sentence()
+        self.build(script, start=self.work_in_background())
+        self.run_conv()
+        self.assertEqual(self.started, ["Primeira.", "Segunda coisa."])  # no name needed, however long the work takes
+        self.assertEqual(self.conv.out_of_window, 0)
+        self.assertTrue(self.speeches[0].cancelled.is_set())  # the 1st work lost its voice but was not told to stop
+
+    def test_talking_over_a_progress_line_hushes_it_and_is_a_normal_turn(self):
+        self.heard = ["Primeira.", "Olha outra coisa."]  # no check transcription in between: he did not need to say the name
+        self.build(self.sentence() + self.over(1.0), start=self.work_in_background(chatter=True))
+        self.run_conv()
+        self.assertEqual(self.started, ["Primeira.", "Olha outra coisa."])
+        self.assertEqual((self.conv.ignored, self.conv.interruptions), (0, 0))
+        self.assertTrue(self.speeches[0].cancelled.is_set())  # the 1st work lost its voice (it announces itself when done)
+
+    def test_calling_him_by_name_over_background_work_hushes_its_voice_and_gets_the_acknowledgement(self):
+        self.heard = ["Primeira.", "Jarvis."]
+        self.build(self.sentence() + self.over(0.5), start=self.work_in_background())
+        self.run_conv()
+        self.assertTrue(self.speeches[0].cancelled.is_set())
+        self.assertEqual(self.acks, [1])  # "pois não": he is heard; the work goes on without talking
+        self.assertEqual(self.started, ["Primeira."])
+
+    def test_the_idle_timeout_does_not_close_the_conversation_while_work_goes_on(self):
+        self.heard = ["Primeira."]
+        self.build(self.sentence() + seconds_of(quiet, 30.0), start=self.work_in_background(), idle_s=5.0)
+        self.run_conv()
+        self.assertNotIn("  (silêncio: encerrando o modo conversa)", self.logs)
+
+    def test_an_announcement_from_the_background_is_spoken_when_nobody_is_talking(self):
+        spoken = []
+        self.build(seconds_of(quiet, 1.0), speak_text=lambda text, speech, player: spoken.append(text))
+        self.conv.announce("Terminei, senhor.")
+        self.run_conv()
+        self.assertEqual(spoken, ["Terminei, senhor."])
+
+    def test_an_announcement_waits_while_he_is_talking(self):
+        spoken = []
+        self.heard = ["Bom dia."]
+        def speak(text, speech, player):
+            spoken.append(text)
+            speech.generating = False  # a one-line announcement is done at once
+
+        self.build(seconds_of(voice, 0.5) + seconds_of(quiet, d.SILENCE_S + 0.1), speak_text=speak)
+        self.conv.announce("Terminei, senhor.")
+        self.run_conv()
+        self.assertEqual(self.started, ["Bom dia."])  # his sentence was taken first
+        self.assertEqual(spoken, ["Terminei, senhor."])
+
+    def test_his_own_voice_heard_back_by_the_microphone_is_not_taken_for_the_owner(self):
+        self.heard = ["Preciso rodar o comando npm, senhor. Autoriza?", "Bom dia."]
+        self.build(self.sentence() + self.sentence())
+        self.conv.note_spoken("Preciso rodar o comando npm, senhor.")
+        self.conv.note_spoken("Autoriza?")
+        self.run_conv()
+        self.assertEqual(self.started, ["Bom dia."])
+        self.assertEqual(self.conv.echoes, 1)
+
+    def test_a_short_sentence_is_never_taken_for_an_echo(self):
+        self.heard = ["Sim."]
+        self.build(self.sentence())
+        self.conv.note_spoken("Autoriza? Diga sim, sempre ou não.")
+        self.run_conv()
+        self.assertEqual(self.started, ["Sim."])
 
     def test_idle_for_too_long_ends_the_conversation(self):
         ticks = iter(range(100))

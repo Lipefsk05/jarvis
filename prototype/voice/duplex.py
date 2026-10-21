@@ -10,6 +10,8 @@ here (the microphone and the speaker are passed in), so the logic runs in tests.
 from __future__ import annotations
 
 import collections
+import difflib
+import queue
 import re
 import threading
 import time
@@ -39,7 +41,7 @@ HOLD_LONG_S = 2.00               # ...and when it is a hanging fragment ("Então
 IDLE_S = 20.0                    # no one talking for this long ends the conversation mode
 FOLLOW_UP_S = 10.0               # after he stops talking, the owner can answer without calling him for this long
 
-EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:tchau|ate logo|ate mais|encerra\w*|chega por hoje|pode parar)\b")
+EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:(?:obrigad[oa]|valeu|vlw|ok|beleza|blz|certo|entao)\W+)*(?:tchau|ate logo|ate mais|encerra\w*|chega por hoje|pode parar)\b")
 
 
 def fold(text: str) -> str:
@@ -246,6 +248,8 @@ class Speech:
     sentences: list[str] = field(default_factory=list)
     cancelled: threading.Event = field(default_factory=threading.Event)
     generating: bool = True
+    working: bool = False   # background work is going on behind this speech (dev mode): silence is not "he is speaking"
+    chatter: bool = False   # what plays now is only a progress line ("estou lendo..."): the owner may talk over it freely
 
 
 class Conversation:
@@ -261,10 +265,14 @@ class Conversation:
                  transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
                  ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print,
                  follow_up_s: float = FOLLOW_UP_S, standby: bool = False,
-                 intercept: Callable[[str], bool] | None = None) -> None:
+                 intercept: Callable[[str], bool] | None = None,
+                 speak_text: Callable | None = None) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
         self._transcribe, self._start_speech, self._say, self._ack = transcribe, start_speech, say, ack
         self._clock, self._idle_s, self._log, self._follow_up_s = clock, idle_s, log, follow_up_s
+        self._speak_text = speak_text  # (text, speech, player): speaks a line the background work announces by itself
+        self._announcements: queue.SimpleQueue = queue.SimpleQueue()
+        self._recent_spoken: collections.deque = collections.deque(maxlen=14)
         self._intercept = intercept   # takes a sentence before the model does (mode switches, settings): True = handled
         self._standby = standby       # no Enter: the loop never ends, it falls back to "closed" and waits for his name
         self._closed = standby        # closed = nothing is answered until something said starts with his name
@@ -280,7 +288,9 @@ class Conversation:
         self._checks = 0
         self._next_check = CHECK_FIRST_S
         self.interruptions = 0
+        self.echoes = 0               # sentences dropped for being the Jarvis's own voice heard back by the microphone
         self.ignored = 0              # voices over him that did not call him
+        self._overlap = 0             # frames of the current recording that were heard while the Jarvis was speaking
         self._voiced = 0              # voiced frames in the current recording (tells a stale early transcription)
         self._spec: dict | None = None  # the early transcription: {"voiced": n, "text": str|None, "thread": Thread}
         self._holding = False         # the sentence sounded unfinished: waiting a little more before answering
@@ -291,23 +301,49 @@ class Conversation:
         self.early_hits = 0           # times the early transcription was reused
         self.holds = 0                # times the extra wait happened
 
-    def _close(self) -> None:
+    def _close(self, why: str = "") -> None:
         """Standby only: the conversation is over ("tchau" or silence); from now on only his name opens it again."""
         self._closed, self._open_until = True, 0.0
         self._recording, self._spec, self._holding = None, None, False
-        self._log("  (conversa fechada: chame 'Jarvis' pra abrir)")
+        self._log("  (conversa fechada" + (f", {why}" if why else "") + ": chame 'Jarvis' pra abrir)")
 
     def _wake(self, audio: np.ndarray) -> bool:
         """Closed: is what was just said a call? The cheap check, no vocabulary prompt (it would echo the name back)."""
-        if not has_name(self._transcribe(audio, quick=True)):
+        text = self._transcribe(audio, quick=True)
+        if not has_name(text) or self._is_echo(text):
             return False
         self._closed = False
         self._open_window()  # the 1st sentence is the call itself, the next ones need no name for a while
         self._log("  (chamado: conversa aberta)")
         return True
 
+    def note_spoken(self, text: str) -> None:
+        """Remember a line the Jarvis just said, so that if the microphone picks it up (no headphones) it is not taken for the owner."""
+        self._recent_spoken.append(fold(text))
+
+    def _is_echo(self, text: str) -> bool:
+        heard = " ".join(re.findall(r"[a-z0-9]+", fold(text)))
+        if len(heard) < 12:
+            return False  # too short to tell an echo from a word of his
+        for line in self._recent_spoken:
+            said = " ".join(re.findall(r"[a-z0-9]+", line))
+            if heard in said or (len(said) >= 12 and said in heard) or difflib.SequenceMatcher(None, heard, said).ratio() >= 0.75:
+                return True
+        return False
+
+    def announce(self, text: str) -> None:
+        """Thread-safe: background work asks the Jarvis to say something when it is a good moment (nobody is talking)."""
+        self._announcements.put(text)
+
     def _speaking(self) -> bool:
-        return self._speech is not None and (self._speech.generating or self._player.busy)
+        speech = self._speech
+        return speech is not None and ((speech.generating and not speech.working) or self._player.busy)
+
+    def _working(self) -> bool:
+        return self._speech is not None and self._speech.working
+
+    def _chatter(self) -> bool:
+        return self._speech is not None and self._speech.chatter
 
     def _commit_answer(self) -> None:
         """Put in the history what the Jarvis said: all of it, or only what the owner heard before cutting in."""
@@ -355,7 +391,14 @@ class Conversation:
 
     def _turn(self, heard: str) -> bool:
         """Answer what the owner said. False when he asked to end the conversation."""
+        if self._is_echo(heard):
+            self.echoes += 1
+            self._log(f"  (era o eco da minha própria voz, ignorei «{heard[:60]}»)")
+            return True
         called = has_name(heard)
+        if called and self._speech is not None and self._speech.working:
+            self._speech.cancelled.set()  # "Jarvis" over background work hushes its voice (it carries on and announces itself)
+            self._speech = None
         said = heard
         heard = strip_name(heard) if called else heard.strip()
         if len(heard) < 2:
@@ -376,6 +419,9 @@ class Conversation:
             return True
         self.history.append({"role": "user", "content": heard})
         self._player.reset_heard()
+        if self._speech is not None and self._speech.working:
+            self._speech.cancelled.set()  # the work goes on in the background; only its voice goes quiet (it announces itself later)
+            self._speech = None
         self._speech = Speech()
         self._start_speech(heard, self.history[-12:], self._speech, self._player)
         return True
@@ -416,6 +462,14 @@ class Conversation:
                     return True
                 self._cut()
             else:
+                overlapped = self._overlap * FRAME_S / max(len(audio) / RATE, 0.1)
+                if overlapped >= 0.5 and not has_name(heard) and len(heard) >= 2:
+                    # most of it was heard while the Jarvis spoke and it does not call him: his own voice leaking into the
+                    # microphone (a speaker, a loud headset), not the owner answering
+                    self._player.set_volume(1.0)
+                    self.echoes += 1
+                    self._log(f"  (quase tudo foi dito por cima da minha fala e sem o meu nome: provável eco, ignorei «{heard[:60]}»)")
+                    return True
                 self._player.set_volume(1.0)  # he finished meanwhile: the open conversation takes it as a turn
         return self._turn(heard)
 
@@ -426,23 +480,31 @@ class Conversation:
         while True:
             frame = self._frames()
             now = self._clock()
-            if not self._closed and not self._speaking() and self._recording is None and now - last_activity > self._idle_s:
+            if not self._closed and not self._speaking() and not self._working() and self._recording is None and now - last_activity > self._idle_s:
                 if not self._standby:  # checked every frame: the microphone keeps delivering them, `None` is only a stalled queue
                     self._log("  (silêncio: encerrando o modo conversa)")
                     return
-                self._close()
+                self._close(f"{now - last_activity:.0f} s sem atividade")
                 last_activity = now
             if frame is None:
                 continue
-            if self._speech is not None and not self._speaking():
+            if self._speech is not None and not self._speaking() and not self._speech.working:
                 self._commit_answer()
                 self._open_window()  # he finished talking: now the owner may answer without calling him
+            if (self._speak_text is not None and self._speech is None and not self._announcements.empty()
+                    and not self._player.busy and self._recording is None and not self._gate.active):
+                self._closed = False  # the work is done and has something to say: the conversation reopens
+                self._speech = Speech()
+                self._speak_text(self._announcements.get_nowait(), self._speech, self._player)
             speaking = self._speaking()
-            self._gate.min_speech_s = BARGE_IN_S if speaking else START_S
+            loud = speaking and not self._chatter()  # a progress line is not worth hushing for: the owner just talks
+            self._gate.min_speech_s = BARGE_IN_S if loud else START_S
             event = self._gate.feed(self._vad.prob(frame))
             self._ring.append(frame)
             if self._recording is not None:
                 self._recording.append(frame)
+                if speaking:
+                    self._overlap += 1
                 if len(self._recording) * FRAME_S > MAX_SENTENCE_S:
                     event = "end"
             if self._gate.active or speaking:
@@ -458,9 +520,12 @@ class Conversation:
                 else:
                     self._recording = list(self._ring)
                     self._voiced, self._spec, self._extended = 1, None, False
-                if speaking:
+                    self._overlap = 0
+                if loud:
                     self._checking, self._named, self._checks, self._next_check = True, False, 0, CHECK_FIRST_S
                     self._player.set_volume(DUCK)
+                elif speaking:
+                    self._player.stop()  # only a progress line was playing: it goes quiet and what he says is a normal turn
             elif self._holding and self._recording is not None:
                 self._hold_quiet += FRAME_S
                 if self._hold_quiet >= self._hold_limit:  # he did not go on: answer what was already heard
@@ -469,7 +534,7 @@ class Conversation:
                     if not self._turn(text):
                         if not self._standby:
                             return
-                        self._close()
+                        self._close("pediu pra encerrar")
                     last_activity = self._clock()
             elif event == "end" and self._recording is not None:
                 frames, self._recording = self._recording, None
@@ -481,7 +546,7 @@ class Conversation:
                     continue
                 if (not self._checking and not self._extended and not self._holding):
                     heard = self._heard(audio)
-                    if self._utterance_start > self._open_until and not has_name(heard):
+                    if self._utterance_start > self._open_until and not self._working() and not has_name(heard):
                         self.out_of_window += 1  # the follow-up window had closed: without his name this is not for him
                         self._log(f"  (fora da janela de {self._follow_up_s:.0f} s e sem o meu nome: ignorei «{heard}»)")
                         last_activity = self._clock()
@@ -491,16 +556,17 @@ class Conversation:
                         self._hold_limit = hold_seconds(heard)
                         self._recording = frames  # keep what was said; the voice, if it comes back, is appended
                         self.holds += 1
+                        last_activity = self._clock()  # waiting for him to go on is activity, not silence
                         self._log("  (parece que o senhor ainda vai continuar: espero um pouco)")
                         continue
                     if not self._turn(heard):
                         if not self._standby:
                             return
-                        self._close()
+                        self._close("pediu pra encerrar")
                 elif not self._finish(audio):
                     if not self._standby:
                         return
-                    self._close()
+                    self._close("pediu pra encerrar")
                 last_activity = self._clock()
             if (self._recording is not None and self._checking and not self._named
                     and len(self._recording) * FRAME_S >= self._next_check):
