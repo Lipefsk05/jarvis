@@ -5,6 +5,8 @@
     python bench_clips.py --local-large   also the local large-v3 (downloads ~3 GB the first time)
     python bench_clips.py --only-phrases  skip the short name checks
     python bench_clips.py --no-groq       local models only: nothing leaves the PC
+    python bench_clips.py --only-large --last 15 --no-groq   just the local large-v3 on the newest 15 clips (fast; the
+                                          turbo's text is already in the "no momento" line)
 
 Prints, per clip, what each model wrote and how long it took, then a summary. The Groq calls send the clips to Groq
 (free tier, as the Telegram voice notes already do): run it only on clips you are fine sending."""
@@ -48,18 +50,22 @@ def main() -> None:
     parser.add_argument("--local-large", action="store_true")
     parser.add_argument("--only-phrases", action="store_true")
     parser.add_argument("--no-groq", action="store_true")
+    parser.add_argument("--only-large", action="store_true", help="load only the local large-v3 (the turbo text is already in the index)")
+    parser.add_argument("--last", type=int, default=0, help="only the newest N clips")
     args = parser.parse_args()
     folder = OUT / "clips"
     index = folder / "clips.csv"
     if not index.exists():
         raise SystemExit(f"nenhum trecho em {folder}: rode `python talk.py --save-audio` e converse um pouco")
     rows = [r for r in csv.reader(index.open(encoding="utf-8")) if len(r) >= 4 and (r[1] == "frase" or not args.only_phrases)]
+    if args.last:
+        rows = rows[-args.last:]
     print(f"{len(rows)} trechos\n")
 
     add_cuda_dlls()
     from faster_whisper import WhisperModel
-    local = {"local turbo": WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")}
-    if args.local_large:
+    local = {} if args.only_large else {"local turbo": WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")}
+    if args.local_large or args.only_large:
         local["local large-v3"] = WhisperModel("large-v3", device="cuda", compute_type="float16")
     for model in local.values():
         list(model.transcribe(np.zeros(16000, dtype=np.float32), language="pt")[0])
