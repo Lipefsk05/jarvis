@@ -99,6 +99,13 @@ class NameTest(unittest.TestCase):
         for text in ("aham", "quanto custa o dólar", "o servidor caiu", "", "Já vi esse vídeo", "já vi, é de política"):
             self.assertFalse(d.has_name(text), text)  # "já vi" is common speech: it must never count as his name
 
+    def test_mishearings_of_the_name_count_only_when_they_are_the_whole_utterance(self):
+        for text in ("Jams.", "Jerms", "Jabs", "Jens.", "Gervis.", "J'ai a vis. J'ai a vis.", "Ei, Jams"):
+            self.assertTrue(d.has_name(text), text)
+            self.assertEqual(d.strip_name(text), "", text)
+        for text in ("O Jens me mandou um vídeo", "Jens, me explica o Firebase", "Tchau", "jams de música"):
+            self.assertFalse(d.has_name(text), text)
+
     def test_the_call_is_cut_from_the_start_of_the_sentence(self):
         self.assertEqual(d.strip_name("Jarvis, me fala só do Supabase."), "me fala só do Supabase")
         self.assertEqual(d.strip_name("Ei, Jarvis: pera aí"), "pera aí")

@@ -49,14 +49,23 @@ _NAME = re.compile(r"\b(?:jarvis|jarves|jarvi|jarviz|jarvez|jarbis|jarvice|javis
 _NAME_AT_START = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa|pera|peraí|pera ai|espera|calma)\W+)*(?:" + _NAME.pattern[2:-2] + r")\W*")
 
 
+# What the Whisper turbo wrote when the owner said "Jarvis" low or "para dentro" (2026-10-21 real test). They count as his
+# name ONLY when they are the whole utterance: inside a sentence ("Jens me mandou...") they are ordinary words.
+_ALONE_VARIANTS = ("jams", "jerms", "jabs", "jens", "germs", "germes", "gervis", "gevis", "jeves", "jarms", "jarvs", "j'ai a vis", "ja avis", "ja vis")
+_NAME_ALONE = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa)\W+)?(?:(?:" + "|".join(_ALONE_VARIANTS) + r")\W*)+$")
+
+
 def has_name(text: str) -> bool:
     """Did the owner call him? Tolerant of how Whisper spells it."""
-    return bool(_NAME.search(fold(text)))
+    folded = fold(text)
+    return bool(_NAME.search(folded) or _NAME_ALONE.match(folded))
 
 
 def strip_name(text: str) -> str:
     """The sentence without the call at its start ("Jarvis, me fala do Supabase" -> "me fala do Supabase")."""
     folded = fold(text)
+    if _NAME_ALONE.match(folded):
+        return ""
     match = _NAME_AT_START.match(folded)
     if match is None:
         return text.strip()
