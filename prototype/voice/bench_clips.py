@@ -4,6 +4,7 @@
     python bench_clips.py                 local large-v3-turbo vs Groq whisper-large-v3 and whisper-large-v3-turbo
     python bench_clips.py --local-large   also the local large-v3 (downloads ~3 GB the first time)
     python bench_clips.py --only-phrases  skip the short name checks
+    python bench_clips.py --no-groq       local models only: nothing leaves the PC
 
 Prints, per clip, what each model wrote and how long it took, then a summary. The Groq calls send the clips to Groq
 (free tier, as the Telegram voice notes already do): run it only on clips you are fine sending."""
@@ -44,6 +45,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--local-large", action="store_true")
     parser.add_argument("--only-phrases", action="store_true")
+    parser.add_argument("--no-groq", action="store_true")
     args = parser.parse_args()
     folder = OUT / "clips"
     index = folder / "clips.csv"
@@ -59,7 +61,7 @@ def main() -> None:
         local["local large-v3"] = WhisperModel("large-v3", device="cuda", compute_type="float16")
     for model in local.values():
         list(model.transcribe(np.zeros(16000, dtype=np.float32), language="pt")[0])
-    key = read_env("GROQ_API_KEY")
+    key = "" if args.no_groq else read_env("GROQ_API_KEY")
     times: dict[str, list[float]] = {}
 
     for name, kind, _, original in rows:
@@ -76,7 +78,7 @@ def main() -> None:
                                            initial_prompt=None if kind == "checagem" else PROMPT,
                                            condition_on_previous_text=False)
             results[label] = (" ".join(s.text.strip() for s in segments), time.perf_counter() - started)
-        for model in ("whisper-large-v3", "whisper-large-v3-turbo"):
+        for model in (() if args.no_groq else ("whisper-large-v3", "whisper-large-v3-turbo")):
             try:
                 results[f"groq {model.removeprefix('whisper-')}"] = groq(model, path, key)
             except Exception as exc:  # a rate limit must not stop the comparison

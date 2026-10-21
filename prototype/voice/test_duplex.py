@@ -123,11 +123,13 @@ class ConversationTest(unittest.TestCase):
         """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
         `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
+        self.now = 0.0
         self.said, self.started, self.logs, self.count, self.acks = [], [], [], 0, []
         self.player = d.Player(open_stream=lambda rate, cb, dev: FakeStream())
 
         def next_frame():
             self.count += 1
+            self.now += d.FRAME_S  # a virtual clock: one frame is 32 ms
             if hook:
                 hook(self.count, self.player)
             try:
@@ -145,7 +147,8 @@ class ConversationTest(unittest.TestCase):
             speech.generating = False
 
         self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
-                                   say=self.said.append, ack=lambda: self.acks.append(1), idle_s=1e9, log=self.logs.append)
+                                   say=self.said.append, ack=lambda: self.acks.append(1), clock=lambda: self.now, idle_s=1e9,
+                                   log=self.logs.append)
 
     def run_conv(self):
         try:
@@ -282,6 +285,44 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual((self.acks, self.started), ([], []))
         self.assertTrue(any("pouco pra responder" in m for m in self.logs))
+
+    def playing(self):
+        """A hook: the sound card plays whatever is queued, at real-time pace (768 samples per 32 ms frame)."""
+        def hook(n, player):
+            if player.busy:
+                player._callback(np.zeros((768, 1), dtype=np.float32), 768, None, None)
+        return hook
+
+    def test_after_the_window_closes_a_sentence_without_his_name_is_ignored(self):
+        self.heard = ["Bom dia."]
+        self.build(seconds_of(quiet, d.FOLLOW_UP_S + 1.0) + self.sentence())
+        self.run_conv()
+        self.assertEqual(self.started, [])
+        self.assertEqual(self.conv.out_of_window, 1)
+
+    def test_after_the_window_closes_calling_him_works(self):
+        self.heard = ["Jarvis, que horas são?"]
+        self.build(seconds_of(quiet, d.FOLLOW_UP_S + 1.0) + self.sentence())
+        self.run_conv()
+        self.assertEqual(self.started, ["que horas são?"])
+
+    def test_the_window_reopens_each_time_he_finishes_talking(self):
+        self.heard = ["Primeira.", "Segunda.", "Terceira."]
+        script = (self.sentence() + seconds_of(quiet, 4.0) + self.sentence()   # 2nd: inside the window of the 1st answer
+                  + seconds_of(quiet, 3.0) + self.sentence()                    # 3rd: the 2nd answer opened a new one
+                  + seconds_of(quiet, d.FOLLOW_UP_S + 6.0))
+        self.build(script, hook=self.playing())
+        self.run_conv()
+        self.assertEqual(self.started, ["Primeira.", "Segunda.", "Terceira."])
+        self.assertEqual(self.conv.out_of_window, 0)
+
+    def test_a_pause_longer_than_the_window_closes_it_again(self):
+        self.heard = ["Primeira.", "Segunda."]
+        script = (self.sentence() + seconds_of(quiet, d.FOLLOW_UP_S + 4.0) + self.sentence())
+        self.build(script, hook=self.playing())
+        self.run_conv()
+        self.assertEqual(self.started, ["Primeira."])
+        self.assertEqual(self.conv.out_of_window, 1)
 
     def test_the_exit_phrase_says_goodbye_and_ends(self):
         self.heard = ["Tchau."]

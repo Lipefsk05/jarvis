@@ -30,7 +30,7 @@ import sounddevice as sd
 import soundfile as sf
 
 from common import OUT, add_cuda_dlls, read_env
-from duplex import FRAME, fold, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
+from duplex import FOLLOW_UP_S, FRAME, fold, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
 from turn_loop import SRC, VOICE, VOICE_RULES, clean, cut, load, load_template, pick_mic, polish, render, stream_groq
 from turn_loop import for_speech, is_greeting, starts_with_greeting
 
@@ -343,7 +343,8 @@ def main() -> None:
     while True:
         if input("\nEnter para abrir a conversa (q + Enter sai): ").strip().lower() == "q":
             break
-        print(f"  (ouvindo; pra interromper o Jarvis, chame 'Jarvis'; diga 'tchau' ou fique {args.idle:.0f} s em silêncio pra encerrar)")
+        print(f"  (ouvindo; sem o nome só até {FOLLOW_UP_S:.0f} s depois que ele termina de falar; depois, e pra interromper, "
+              f"chame 'Jarvis'; diga 'tchau' ou fique {args.idle:.0f} s em silêncio pra encerrar)")
         vad.reset()
         while not blocks.empty():
             blocks.get_nowait()

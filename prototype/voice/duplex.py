@@ -36,6 +36,7 @@ SPEC_S = 0.35                    # quiet after which the transcription starts ea
 HOLD_S = 0.80                    # extra wait when the sentence sounds unfinished ("então...", no full stop): he may be thinking
 HOLD_LONG_S = 2.00               # ...and when it is a hanging fragment ("Então...", "Deixa eu pensar..."): he is surely thinking
 IDLE_S = 20.0                    # no one talking for this long ends the conversation mode
+FOLLOW_UP_S = 10.0               # after he stops talking, the owner can answer without calling him for this long
 
 EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:tchau|ate logo|ate mais|encerra\w*|chega por hoje|pode parar)\b")
 
@@ -61,7 +62,8 @@ def strip_name(text: str) -> str:
         return text.strip()
     # fold() keeps the length of ASCII text and only drops combining marks, so cut the original at the same word count
     words_removed = len(folded[:match.end()].split())
-    return " ".join(text.split()[words_removed:]).strip(" ,.:;-!?")
+    rest = " ".join(text.split()[words_removed:])
+    return rest.lstrip(" ,.:;-!?").rstrip(" ,.:;-")  # a closing "?" or "!" is part of what he asked
 
 
 _UNFINISHED_END = {"e", "é", "então", "entao", "tipo", "mas", "que", "aí", "ai", "tá", "ta", "hum", "hmm", "né", "bom", "bem",
@@ -240,10 +242,14 @@ class Conversation:
 
     def __init__(self, frames: Callable[[], np.ndarray | None], vad, gate: SpeechGate, player: Player,
                  transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
-                 ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print) -> None:
+                 ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print,
+                 follow_up_s: float = FOLLOW_UP_S) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
         self._transcribe, self._start_speech, self._say, self._ack = transcribe, start_speech, say, ack
-        self._clock, self._idle_s, self._log = clock, idle_s, log
+        self._clock, self._idle_s, self._log, self._follow_up_s = clock, idle_s, log, follow_up_s
+        self._open_until = 0.0        # until when he can talk without calling the Jarvis (the follow-up window)
+        self._utterance_start = 0.0
+        self.out_of_window = 0        # sentences ignored for lacking his name once the window had closed
         self.history: list[dict] = []
         self._ring: collections.deque = collections.deque(maxlen=int(PRE_ROLL_S / FRAME_S))
         self._recording: list[np.ndarray] | None = None
@@ -280,7 +286,11 @@ class Conversation:
         interrupted = speech.cancelled.is_set()
         self.history.append({"role": "assistant", "content": " ".join(said) + (" [o senhor interrompeu]" if interrupted else "")})
 
+    def _open_window(self, extra: float = 0.0) -> None:
+        self._open_until = self._clock() + self._follow_up_s + extra
+
     def _cut(self) -> None:
+        self._open_window()  # he called: what comes next needs no name
         if self._speech is not None:
             self._speech.cancelled.set()
         self._player.stop()
@@ -315,6 +325,7 @@ class Conversation:
         if len(heard) < 2:
             if called and self._ack:  # he only called ("Jarvis"): say so he knows he is heard; the next sentence is the turn
                 self._ack()
+                self._open_window(extra=2.0)  # the "pois não" itself takes a moment
                 self._log("  (só o chamado: respondi 'pois não'; a próxima frase é o pedido)")
             else:
                 self._log(f"  (ouvi «{said}»: pouco pra responder)")
@@ -371,6 +382,7 @@ class Conversation:
 
     def run(self) -> None:
         last_activity = self._clock()
+        self._open_window()  # he pressed Enter to talk: the first sentence needs no name
         while True:
             frame = self._frames()
             now = self._clock()
@@ -381,6 +393,7 @@ class Conversation:
                 continue
             if self._speech is not None and not self._speaking():
                 self._commit_answer()
+                self._open_window()  # he finished talking: now the owner may answer without calling him
             speaking = self._speaking()
             self._gate.min_speech_s = BARGE_IN_S if speaking else START_S
             event = self._gate.feed(self._vad.prob(frame))
@@ -395,6 +408,8 @@ class Conversation:
             if self._recording is not None and voiced:
                 self._voiced += 1
             if event == "start":
+                if not self._holding:
+                    self._utterance_start = now
                 if self._holding:  # he went on after the extra wait: it is all one sentence
                     self._holding, self._hold_quiet, self._extended = False, 0.0, True
                 else:
@@ -417,6 +432,11 @@ class Conversation:
                 self._gate.reset()
                 if (not self._checking and not self._extended and not self._holding):
                     heard = self._heard(audio)
+                    if self._utterance_start > self._open_until and not has_name(heard):
+                        self.out_of_window += 1  # the follow-up window had closed: without his name this is not for him
+                        self._log(f"  (fora da janela de {self._follow_up_s:.0f} s e sem o meu nome: ignorei «{heard}»)")
+                        last_activity = self._clock()
+                        continue
                     if looks_unfinished(heard) and len(heard) >= 2:
                         self._holding, self._held_text, self._hold_quiet = True, heard, 0.0
                         self._hold_limit = hold_seconds(heard)
