@@ -83,12 +83,21 @@ class UnfinishedTest(unittest.TestCase):
             self.assertFalse(d.looks_unfinished(text), text)
 
 
+class HoldSecondsTest(unittest.TestCase):
+    def test_a_hanging_fragment_gets_the_longer_wait(self):
+        for text in ("Então...", "Deixa eu pensar…", "Hum", "Então eu"):
+            self.assertEqual(d.hold_seconds(text), d.HOLD_LONG_S, text)
+
+    def test_a_longer_unfinished_sentence_gets_the_short_wait(self):
+        self.assertEqual(d.hold_seconds("Eu queria saber como funciona o"), d.HOLD_S)
+
+
 class NameTest(unittest.TestCase):
     def test_the_name_in_the_ways_whisper_writes_it(self):
         for text in ("Jarvis", "jarvis, para", "Ei Jarvis!", "Jarves, espera", "já vis", "Pera aí, Jarvis"):
             self.assertTrue(d.has_name(text), text)
-        for text in ("aham", "quanto custa o dólar", "o servidor caiu", ""):
-            self.assertFalse(d.has_name(text), text)
+        for text in ("aham", "quanto custa o dólar", "o servidor caiu", "", "Já vi esse vídeo", "já vi, é de política"):
+            self.assertFalse(d.has_name(text), text)  # "já vi" is common speech: it must never count as his name
 
     def test_the_call_is_cut_from_the_start_of_the_sentence(self):
         self.assertEqual(d.strip_name("Jarvis, me fala só do Supabase."), "me fala só do Supabase")
@@ -114,7 +123,7 @@ class ConversationTest(unittest.TestCase):
         """`script` is a list of frames; the conversation reads them one by one and stops when they run out.
         `hook(n, player)` runs before frame n (to play some audio, like a sound card would)."""
         frames = iter(script)
-        self.said, self.started, self.logs, self.count = [], [], [], 0
+        self.said, self.started, self.logs, self.count, self.acks = [], [], [], 0, []
         self.player = d.Player(open_stream=lambda rate, cb, dev: FakeStream())
 
         def next_frame():
@@ -136,7 +145,7 @@ class ConversationTest(unittest.TestCase):
             speech.generating = False
 
         self.conv = d.Conversation(next_frame, FakeVad(), d.SpeechGate(), self.player, transcribe, start_speech,
-                                   say=self.said.append, idle_s=1e9, log=self.logs.append)
+                                   say=self.said.append, ack=lambda: self.acks.append(1), idle_s=1e9, log=self.logs.append)
 
     def run_conv(self):
         try:
@@ -239,7 +248,7 @@ class ConversationTest(unittest.TestCase):
 
     def test_a_sentence_that_sounds_unfinished_waits_a_little_and_then_answers_it(self):
         self.heard = ["Então, eu queria saber..."]
-        self.build(self.sentence() + seconds_of(quiet, d.HOLD_S + 0.2))
+        self.build(self.sentence() + seconds_of(quiet, d.HOLD_LONG_S + 0.2))  # a trailing "..." waits longer
         self.run_conv()
         self.assertEqual(self.conv.holds, 1)
         self.assertEqual(self.started, ["Então, eu queria saber..."])
@@ -259,6 +268,20 @@ class ConversationTest(unittest.TestCase):
         self.run_conv()
         self.assertEqual(self.conv.holds, 1)
         self.assertEqual(self.started, ["Então, eu queria saber como funciona"])  # still unfinished, but no second wait
+
+    def test_a_bare_call_is_answered_so_he_knows_he_is_heard(self):
+        self.heard = ["Jarvis."]
+        self.build(self.sentence())
+        self.run_conv()
+        self.assertEqual(self.acks, [1])
+        self.assertEqual(self.started, [])
+
+    def test_something_unintelligible_is_logged_and_does_not_answer(self):
+        self.heard = ["."]
+        self.build(self.sentence())
+        self.run_conv()
+        self.assertEqual((self.acks, self.started), ([], []))
+        self.assertTrue(any("pouco pra responder" in m for m in self.logs))
 
     def test_the_exit_phrase_says_goodbye_and_ends(self):
         self.heard = ["Tchau."]

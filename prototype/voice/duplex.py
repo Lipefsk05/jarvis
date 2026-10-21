@@ -34,6 +34,7 @@ DUCK = 0.25                      # his volume while checking, so he does not tal
 SILENCE_S = 0.70                 # quiet that ends the sentence
 SPEC_S = 0.35                    # quiet after which the transcription starts early (thrown away if he talks again)
 HOLD_S = 0.80                    # extra wait when the sentence sounds unfinished ("então...", no full stop): he may be thinking
+HOLD_LONG_S = 2.00               # ...and when it is a hanging fragment ("Então...", "Deixa eu pensar..."): he is surely thinking
 IDLE_S = 20.0                    # no one talking for this long ends the conversation mode
 
 EXIT_PHRASE = re.compile(r"^\W*(?:jarvis\W+)?(?:tchau|ate logo|ate mais|encerra\w*|chega por hoje|pode parar)\b")
@@ -43,7 +44,7 @@ def fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
 
 
-_NAME = re.compile(r"\b(?:jarvis|jarves|jarvi|jarviz|jarvez|jarbis|jarvice|javis|garvis|charvis|harvis|jervis|ja vis|ja ves|ja vi)\b")
+_NAME = re.compile(r"\b(?:jarvis|jarves|jarvi|jarviz|jarvez|jarbis|jarvice|javis|garvis|charvis|harvis|jervis|ja vis)\b")
 _NAME_AT_START = re.compile(r"^\W*(?:(?:ei|oi|ola|e|o|ow|opa|pera|peraí|pera ai|espera|calma)\W+)*(?:" + _NAME.pattern[2:-2] + r")\W*")
 
 
@@ -78,6 +79,15 @@ def looks_unfinished(text: str) -> bool:
         return True
     last = fold(stripped.rstrip(".?!")).split()
     return bool(last) and last[-1] in _UNFINISHED_END
+
+
+def hold_seconds(text: str) -> float:
+    """How long to wait for the rest of an unfinished sentence: a trailing "..." or a very short fragment gets longer."""
+    stripped = text.strip()
+    closed = stripped.endswith((".", "?", "!")) and not stripped.endswith(("...", "…"))
+    if stripped.endswith(("...", "…")) or (not closed and len(stripped.split()) <= 3):
+        return HOLD_LONG_S
+    return HOLD_S
 
 
 def is_exit(text: str) -> bool:
@@ -230,9 +240,9 @@ class Conversation:
 
     def __init__(self, frames: Callable[[], np.ndarray | None], vad, gate: SpeechGate, player: Player,
                  transcribe: Callable[..., str], start_speech: Callable, say: Callable[[str], None] | None = None,
-                 clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print) -> None:
+                 ack: Callable[[], None] | None = None, clock: Callable[[], float] = time.perf_counter, idle_s: float = IDLE_S, log: Callable[[str], None] = print) -> None:
         self._frames, self._vad, self._gate, self._player = frames, vad, gate, player
-        self._transcribe, self._start_speech, self._say = transcribe, start_speech, say
+        self._transcribe, self._start_speech, self._say, self._ack = transcribe, start_speech, say, ack
         self._clock, self._idle_s, self._log = clock, idle_s, log
         self.history: list[dict] = []
         self._ring: collections.deque = collections.deque(maxlen=int(PRE_ROLL_S / FRAME_S))
@@ -249,6 +259,7 @@ class Conversation:
         self._holding = False         # the sentence sounded unfinished: waiting a little more before answering
         self._held_text = ""
         self._hold_quiet = 0.0
+        self._hold_limit = HOLD_S
         self._extended = False        # the extra wait is used at most once per sentence
         self.early_hits = 0           # times the early transcription was reused
         self.holds = 0                # times the extra wait happened
@@ -298,9 +309,16 @@ class Conversation:
 
     def _turn(self, heard: str) -> bool:
         """Answer what the owner said. False when he asked to end the conversation."""
-        heard = strip_name(heard) if has_name(heard) else heard.strip()
+        called = has_name(heard)
+        said = heard
+        heard = strip_name(heard) if called else heard.strip()
         if len(heard) < 2:
-            return True  # he only called ("Jarvis"): the next sentence is the turn
+            if called and self._ack:  # he only called ("Jarvis"): say so he knows he is heard; the next sentence is the turn
+                self._ack()
+                self._log("  (só o chamado: respondi 'pois não'; a próxima frase é o pedido)")
+            else:
+                self._log(f"  (ouvi «{said}»: pouco pra responder)")
+            return True
         self._log(f"  você: {heard}")
         if is_exit(heard):
             if self._say:
@@ -387,7 +405,7 @@ class Conversation:
                     self._player.set_volume(DUCK)
             elif self._holding and self._recording is not None:
                 self._hold_quiet += FRAME_S
-                if self._hold_quiet >= HOLD_S:  # he did not go on: answer what was already heard
+                if self._hold_quiet >= self._hold_limit:  # he did not go on: answer what was already heard
                     text, self._holding = self._held_text, False
                     self._recording, self._spec = None, None
                     if not self._turn(text):
@@ -401,6 +419,7 @@ class Conversation:
                     heard = self._heard(audio)
                     if looks_unfinished(heard) and len(heard) >= 2:
                         self._holding, self._held_text, self._hold_quiet = True, heard, 0.0
+                        self._hold_limit = hold_seconds(heard)
                         self._recording = frames  # keep what was said; the voice, if it comes back, is appended
                         self.holds += 1
                         self._log("  (parece que o senhor ainda vai continuar: espero um pouco)")

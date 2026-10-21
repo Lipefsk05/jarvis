@@ -19,6 +19,7 @@ import asyncio
 import csv
 import io
 import queue
+import re
 import sys
 import threading
 import time
@@ -29,9 +30,18 @@ import sounddevice as sd
 import soundfile as sf
 
 from common import OUT, add_cuda_dlls, read_env
-from duplex import FRAME, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
+from duplex import FRAME, fold, IDLE_S, RATE, Conversation, Player, SpeechGate, StreamingVad
 from turn_loop import SRC, VOICE, VOICE_RULES, clean, cut, load, load_template, pick_mic, polish, render, stream_groq
 from turn_loop import for_speech, is_greeting, starts_with_greeting
+
+
+PURE_GREETING = re.compile(r"^\W*(?:bom dia|boa tarde|boa noite)\W*(?:senhor)?\W*$")
+VOICE_OVERRIDE = (
+    "\n\nNeste canal o senhor quer OUVIR você: ignore qualquer regra de mandar detalhe por texto. Você não tem como "
+    "enviar mensagem, Telegram, lembrete ou qualquer coisa por aqui, então NUNCA prometa enviar ou fazer algo que "
+    "exija ferramenta. Para um pedido que pede explicação longa, dê o essencial em 3 a 5 frases curtas faladas e "
+    "pergunte se ele quer que você continue."
+)
 
 
 def pick_output(fragment: str | None):
@@ -179,7 +189,7 @@ def main() -> None:
         if args.save_audio and not args.simulate:  # synthetic voices must never end up among the owner's clips
             save_clip(audio, quick, text, time.perf_counter() - started)
         print(f"  [Whisper{' (checagem)' if quick else ''} {time.perf_counter() - started:.2f} s, {len(audio) / RATE:.1f} s de áudio]"
-              + (f" «{text}»" if quick else ""))
+              + f" «{text}»")
         return text
 
     # --- thinking and speaking, cancellable ---------------------------------------------------------------
@@ -192,11 +202,15 @@ def main() -> None:
             sentence = clean(sentence)
             if not sentence:
                 return ""
-            return polish(heard, sentence, datetime.now(), is_greeting=is_greeting(heard),
-                          greeting_request=starts_with_greeting(heard), allows_help=False)
+            sentence = polish(heard, sentence, datetime.now(), is_greeting=is_greeting(heard),
+                              greeting_request=starts_with_greeting(heard), allows_help=False)
+            # the tone fixer sees one sentence at a time here, so a lone "Bom dia, senhor." survives it: nobody greeted, drop it
+            if not (is_greeting(heard) or starts_with_greeting(heard)) and PURE_GREETING.match(fold(sentence)):
+                return ""
+            return sentence
 
         def think() -> None:
-            system = render(template, humor_allowed=True, now=datetime.now()) + VOICE_RULES
+            system = render(template, humor_allowed=True, now=datetime.now()) + VOICE_RULES + VOICE_OVERRIDE
             buffer, is_first = "", True
             try:
                 stream = stream_groq(key, system, history)
@@ -285,6 +299,33 @@ def main() -> None:
             time.sleep(0.05)
         time.sleep(0.3)
 
+    ack_lines = ("Pois não, senhor?", "Sim, senhor?", "Às ordens, senhor.")
+    ack_audio: list = []
+    ack_next = {"i": 0}
+
+    def prepare_acks() -> None:
+        """Short lines synthesized once, so the answer to a bare "Jarvis" is instant (no network wait)."""
+        import edge_tts
+
+        async def synth(text: str) -> bytes:
+            data = bytearray()
+            async for chunk in edge_tts.Communicate(for_speech(text, table), VOICE).stream():
+                if chunk["type"] == "audio":
+                    data += chunk["data"]
+            return bytes(data)
+
+        for line in ack_lines:
+            ack_audio.append(sf.read(io.BytesIO(asyncio.run(synth(line))), dtype="float32"))
+
+    def ack() -> None:
+        if not ack_audio:
+            return
+        audio, rate = ack_audio[ack_next["i"] % len(ack_audio)]
+        ack_next["i"] += 1
+        player.enqueue(9000 + ack_next["i"], audio, rate)
+
+    prepare_acks()
+
     # --- the microphone: always open, 32 ms frames ----------------------------------------------------------
     blocks: queue.Queue = queue.Queue()
 
@@ -294,7 +335,7 @@ def main() -> None:
         except queue.Empty:
             return None
 
-    conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, start_speech, say=say,
+    conversation = Conversation(next_frame, vad, SpeechGate(), player, transcribe, start_speech, say=say, ack=ack,
                                 idle_s=args.idle, log=stamp)
     if simulated:
         simulate(conversation, blocks, player, stamp)
