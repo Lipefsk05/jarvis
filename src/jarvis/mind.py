@@ -17,8 +17,8 @@ _TASK = re.compile(r"^- \[ \]\s+(.*)$")
 _HEADING = re.compile(r"^##\s+(.*)$")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
-GROUPS = ("pessoal", "empresa")
-INDEX_FILES = {"pessoal", "empresa"}  # folder indexes carry no tasks
+GROUPS = ("pessoal", "empresa", "trabalho")
+INDEX_FILES = {"pessoal", "empresa", "trabalho"}  # folder indexes carry no tasks
 
 
 @dataclass(frozen=True)

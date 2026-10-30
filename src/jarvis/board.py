@@ -141,7 +141,7 @@ def _clean(text: str) -> str:
 
 
 def load_board(mind_dir: Path) -> list[BoardTask]:
-    """Every pending `- [ ]` bullet under tarefas/pessoal and tarefas/empresa, markers parsed."""
+    """Every pending `- [ ]` bullet under tarefas/pessoal, tarefas/empresa and tarefas/trabalho, markers parsed."""
     tasks: list[BoardTask] = []
     for group in GROUPS:
         folder = mind_dir / "tarefas" / group
