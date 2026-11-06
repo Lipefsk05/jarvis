@@ -134,16 +134,22 @@ FIRST_CHUNK_CHARS = 55  # a first sentence longer than this is cut at its last c
 
 def cut(buffer: str, first: bool) -> tuple[list[str], str]:
     """Complete sentences at the start of `buffer`, and what is left. Never cuts inside an open [[...]] mark."""
+
+    def closed(chunk: str) -> bool:
+        """No [[...]] mark left open in `chunk`: only then is it safe to cut right after it."""
+        return chunk.count("[[") <= chunk.count("]]")
+
     found: list[str] = []
-    while buffer.count("[[") <= buffer.count("]]"):
-        match = re.search(r"(?<=[.!?…])\s+", buffer)
+    while closed(buffer):
+        match = next((m for m in re.finditer(r"(?<=[.!?…])\s+", buffer) if closed(buffer[:m.start()])), None)
+        comma = next((i for i in range(len(buffer) - 2, -1, -1) if buffer[i] == "," and closed(buffer[:i + 1])), None) \
+            if first and len(buffer) > FIRST_CHUNK_CHARS else None
         if match:
             found.append(buffer[:match.start()])
             buffer, first = buffer[match.end():], False
-        elif first and len(buffer) > FIRST_CHUNK_CHARS and "," in buffer[:-1]:
-            at = buffer.rindex(",", 0, len(buffer) - 1) + 1
-            found.append(buffer[:at])
-            buffer, first = buffer[at:].lstrip(), False
+        elif comma is not None:
+            found.append(buffer[:comma + 1])
+            buffer, first = buffer[comma + 1:].lstrip(), False
         else:
             break
     return found, buffer
